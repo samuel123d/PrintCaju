@@ -15,8 +15,8 @@ function estimateProductCost(product) {
 }
 
 export function calculateFinancialControl({ sales, transactions, products, month }) {
-  const monthSales = sales.filter((sale) => sale.status !== 'cancelled' && sale.soldAt?.startsWith(month))
-  const monthTransactions = transactions.filter((entry) => entry.date?.startsWith(month))
+  const monthSales = sales.filter((sale) => sale.status !== 'cancelled' && (!month || month === 'all' || sale.soldAt?.startsWith(month)))
+  const monthTransactions = transactions.filter((entry) => !month || month === 'all' || entry.date?.startsWith(month))
   const activeTransactions = monthTransactions.filter((entry) => entry.status !== 'cancelled')
   const expenses = activeTransactions.filter((entry) => entry.type === 'expense')
   const incomes = activeTransactions.filter((entry) => entry.type === 'income')

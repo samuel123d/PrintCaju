@@ -29,6 +29,7 @@ export default function ClientsPage() {
   const [message, setMessage] = useState('')
   const [saveError, setSaveError] = useState('')
   const [deletingId, setDeletingId] = useState('')
+  const [formLinkMessage, setFormLinkMessage] = useState('')
   const [selectedClient, setSelectedClient] = useState(null)
   const filteredClients = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR')
@@ -61,6 +62,17 @@ export default function ClientsPage() {
     return quotes.filter((quote) => quote.clientId === selectedClient.id || matchByLegacyDetails(quote))
       .sort((left, right) => String(right.quoteDate || '').localeCompare(String(left.quoteDate || '')))
   }, [quotes, selectedClient])
+
+  async function copyCustomerRegistrationLink() {
+    const link = `${window.location.origin}/cadastro-cliente`
+    setFormLinkMessage('')
+    try {
+      await navigator.clipboard.writeText(link)
+      setFormLinkMessage('Link do formulário copiado. Envie ao cliente pelo WhatsApp ou e-mail.')
+    } catch {
+      setFormLinkMessage('Não foi possível copiar automaticamente. Abra o formulário pelo botão abaixo e copie o endereço do navegador.')
+    }
+  }
 
   function resetForm() {
     setForm(emptyClient())
@@ -125,7 +137,8 @@ export default function ClientsPage() {
   }
 
   return <div className="page-stack">
-    <div className="page-intro"><div><p className="eyebrow">RELACIONAMENTO</p><h2>Clientes</h2><p>Guarde os dados dos clientes e selecione-os rapidamente ao registrar vendas ou orçamentos.</p></div></div>
+    <div className="page-intro"><div><p className="eyebrow">RELACIONAMENTO</p><h2>Clientes</h2><p>Envie ao cliente o link público do formulário Google para coletar os dados sem exigir login.</p></div><div className="client-form-link-actions"><button type="button" className="button button-primary" onClick={copyCustomerRegistrationLink}>Copiar link do formulário</button><a className="button button-secondary" href="/cadastro-cliente" target="_blank" rel="noreferrer">Abrir formulário</a></div></div>
+    {formLinkMessage && <div className="alert alert-success" role="status">{formLinkMessage}</div>}
     {(error || saveError) && <div className="sales-error" role="alert">{saveError || error}</div>}
     {message && <div className="alert alert-success" role="status">{message}</div>}
     <section className="panel finance-entry-panel">
@@ -145,9 +158,9 @@ export default function ClientsPage() {
     <section className="panel finance-ledger-panel">
       <header className="finance-section-heading finance-ledger-heading"><div><p className="eyebrow">CADASTRADOS</p><h3>Lista de clientes</h3></div><span className="count-chip">{filteredClients.length} clientes</span></header>
       <div className="products-toolbar"><label className="search-field"><span aria-hidden="true">⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, CPF, telefone ou e-mail" /></label></div>
-      {loading ? <div className="sales-loading">Carregando clientes…</div> : filteredClients.length === 0 ? <div className="finance-empty"><strong>Nenhum cliente cadastrado</strong><small>Cadastre aqui ou salve os dados ao registrar uma venda ou orçamento.</small></div> : <div className="finance-table-scroll"><table className="finance-table clients-table"><thead><tr><th>Cliente</th><th>CPF/CNPJ</th><th>Telefone</th><th>E-mail</th><th>Localização</th><th>Ação</th></tr></thead><tbody>{filteredClients.map((client) => <tr key={client.id} className={selectedClient?.id === client.id ? 'client-selected-row' : ''}><td><button type="button" className="client-name-button" onClick={() => setSelectedClient(client)}>{client.name}</button></td><td>{client.taxId || '—'}</td><td>{client.phone || '—'}</td><td>{client.email || '—'}</td><td>{[client.city, client.state].filter(Boolean).join(' / ') || '—'}</td><td><div className="sale-actions"><button type="button" onClick={() => setSelectedClient(client)}>Histórico</button><button type="button" onClick={() => editClient(client)}>Editar</button><button type="button" className="cancel-action" disabled={deletingId === client.id} onClick={() => removeClient(client)}>{deletingId === client.id ? 'Excluindo…' : 'Excluir'}</button></div></td></tr>)}</tbody></table></div>}
+      {loading ? <div className="sales-loading">Carregando clientes…</div> : filteredClients.length === 0 ? <div className="finance-empty"><strong>Nenhum cliente cadastrado</strong><small>Gere o link acima para o cliente preencher o cadastro, ou cadastre aqui manualmente.</small></div> : <div className="finance-table-scroll"><table className="finance-table clients-table"><thead><tr><th>Cliente</th><th>CPF/CNPJ</th><th>Telefone</th><th>E-mail</th><th>Localização</th><th>Ação</th></tr></thead><tbody>{filteredClients.map((client) => <tr key={client.id} className={selectedClient?.id === client.id ? 'client-selected-row' : ''}><td><button type="button" className="client-name-button" onClick={() => setSelectedClient(client)}>{client.name}</button></td><td>{client.taxId || '—'}</td><td>{client.phone || '—'}</td><td>{client.email || '—'}</td><td>{[client.city, client.state].filter(Boolean).join(' / ') || '—'}</td><td><div className="sale-actions"><button type="button" onClick={() => setSelectedClient(client)}>Histórico</button><button type="button" onClick={() => editClient(client)}>Editar</button><button type="button" className="cancel-action" disabled={deletingId === client.id} onClick={() => removeClient(client)}>{deletingId === client.id ? 'Excluindo…' : 'Excluir'}</button></div></td></tr>)}</tbody></table></div>}
     </section>
-    {selectedClient && <section className="panel client-history-panel">
+    {selectedClient && <section id="client-orders-form-links" className="panel client-history-panel">
       <header className="finance-section-heading"><div><p className="eyebrow">HISTÓRICO DO CLIENTE</p><h3>{selectedClient.name}</h3><p>Pedidos, vendas e orçamentos vinculados a este cliente.</p></div><button type="button" className="button button-secondary" onClick={() => setSelectedClient(null)}>Fechar</button></header>
       {(salesError || quotesError) && <div className="sales-error" role="alert">{salesError || quotesError}</div>}
       {salesLoading || quotesLoading ? <div className="sales-loading">Carregando histórico…</div> : <>

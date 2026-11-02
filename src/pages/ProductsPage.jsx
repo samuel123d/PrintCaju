@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Bytes } from 'firebase/firestore'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import useFinancialMaterials from '../hooks/useFinancialMaterials.js'
@@ -14,11 +15,55 @@ const amount = (value) => Number.parseFloat(String(value ?? '0').replace(',', '.
 const dimensionFactors = { mm: 0.001, cm: 0.01, m: 1 }
 const typeName = () => 'Produto 3D'
 
+async function compressProductPhoto(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Escolha uma imagem JPG, PNG ou WebP.')
+  if (file.size > 8 * 1024 * 1024) throw new Error('A imagem original deve ter até 8 MB.')
+  const bitmap = await createImageBitmap(file)
+  try {
+    for (const edge of [1200, 960, 800, 640, 512, 384, 256]) {
+      const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      for (const quality of [0.82, 0.72, 0.62, 0.5, 0.38]) {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality))
+        if (!blob) throw new Error('Não foi possível preparar a imagem.')
+        if (blob.size <= 400 * 1024) return new File([blob], 'product.webp', { type: 'image/webp' })
+      }
+    }
+  } finally { bitmap.close() }
+  throw new Error('Não foi possível reduzir a imagem para menos de 400 KB.')
+}
+
+function ProductImage({ product, className = '' }) {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    const bytes = product?.photoBytes?.toUint8Array?.()
+    if (!bytes?.length) { setSrc(''); return undefined }
+    const url = URL.createObjectURL(new Blob([bytes], { type: product.photoContentType || 'image/webp' }))
+    setSrc(url)
+    return () => URL.revokeObjectURL(url)
+  }, [product?.photoBytes, product?.photoContentType])
+  return src ? <img className={className} src={src} alt={`Foto de ${product.name}`} /> : null
+}
+
 function ProductForm({ product, type, materials, materialsLoading, materialsError, onClose, onSaved }) {
   const { workspaceUid } = useAuth()
   const [form, setForm] = useState(() => product ? { ...blankProduct(product.type), ...product, cost: String(product.cost ?? ''), price: String(product.price ?? ''), quantity: String(product.quantity ?? 0), minStock: String(product.minStock ?? 0), recipe: Array.isArray(product.recipe) ? product.recipe : [], filamentMaterialId: product.filamentMaterialId ?? '', filamentColor: product.filamentColor ?? '', filamentGrams: String(product.filamentGrams ?? 0), filamentUnitCost: String(product.filamentUnitCost ?? 0), otherFixedCost: String(product.otherFixedCost ?? (!product.recipe?.length && !product.filamentGrams && !product.printHours && !product.energyCost && !product.laborHours ? product.cost ?? 0 : 0)), energyCost: String(product.manualEnergyCost ?? product.energyCost ?? 0), printHours: String(product.printHours ?? 0), electricityRate: String(product.electricityRate ?? 0), laborHours: String(product.laborHours ?? 0), laborRate: String(product.laborRate ?? 0), marginPercent: String(product.marginPercent ?? 50), feePercent: String(product.feePercent ?? 0) } : blankProduct(type))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [photoFile, setPhotoFile] = useState(null)
+  const [photoRemoved, setPhotoRemoved] = useState(false)
+  const [photoError, setPhotoError] = useState('')
+  const [photoPreview, setPhotoPreview] = useState('')
+  const photoInput = useRef(null)
+  useEffect(() => {
+    if (!photoFile) { setPhotoPreview(''); return undefined }
+    const url = URL.createObjectURL(photoFile)
+    setPhotoPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [photoFile])
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const recipeLines = form.recipe.map((line) => {
     const material = materials.find((item) => item.id === line.materialId)
@@ -84,7 +129,7 @@ function ProductForm({ product, type, materials, materialsLoading, materialsErro
       filamentMaterialId: form.filamentMaterialId,
       filamentMaterialName: filamentMaterial?.name || product?.filamentMaterialName || '',
       filamentColor: form.filamentColor,
-      filamentGrams: Number(filamentGrams.toFixed(3)),
+      filamentGrams: Number(filamentGrams.toFixed(4)),
       filamentUnitCost: Number(filamentUnitCost.toFixed(8)),
       filamentCost: Number(filamentCost.toFixed(4)),
       otherFixedCost: Number(otherFixedCost.toFixed(4)),
@@ -99,6 +144,13 @@ function ProductForm({ product, type, materials, materialsLoading, materialsErro
     }
     setSaving(true)
     try {
+      if (photoFile) {
+        data.photoBytes = Bytes.fromUint8Array(new Uint8Array(await photoFile.arrayBuffer()))
+        data.photoContentType = photoFile.type
+      } else if (photoRemoved) {
+        data.photoBytes = null
+        data.photoContentType = null
+      }
       if (product) await updateProduct(workspaceUid, product.id, data)
       else await createProduct(workspaceUid, data)
       onSaved(product ? 'Produto atualizado.' : 'Produto cadastrado.')
@@ -115,11 +167,12 @@ function ProductForm({ product, type, materials, materialsLoading, materialsErro
     <label>{product ? 'Saldo atual' : 'Saldo inicial'}<input type="number" min="0" step="1" readOnly={Boolean(product)} value={form.quantity} onChange={(event) => set('quantity', event.target.value)} />{product && <small>Para alterar o saldo, use os ajustes na área Estoque.</small>}</label>
     <label>Estoque mínimo<input type="number" min="0" step="1" value={form.minStock} onChange={(event) => set('minStock', event.target.value)} /><small>O sistema sinaliza quando o saldo chegar a este limite.</small></label>
     <label className="field-span-two">Descrição<textarea rows="3" maxLength={600} value={form.description} onChange={(event) => set('description', event.target.value)} /></label>
+    <div className="field-span-two product-photo-field"><span>Foto do produto</span><div className="product-photo-preview">{photoPreview ? <img src={photoPreview} alt="Prévia da foto do produto" /> : !photoRemoved && product?.photoBytes ? <ProductImage product={product} /> : <span>Sem foto</span>}</div><div className="product-photo-actions"><button type="button" className="button button-secondary" onClick={() => photoInput.current?.click()}>{product?.photoBytes && !photoRemoved ? 'Trocar foto' : 'Adicionar foto'}</button>{(photoFile || (product?.photoBytes && !photoRemoved)) && <button type="button" className="button button-quiet" onClick={() => { setPhotoFile(null); setPhotoRemoved(true); setPhotoError(''); if (photoInput.current) photoInput.current.value = '' }}>Remover foto</button>}<input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setPhotoError(''); try { setPhotoFile(await compressProductPhoto(file)); setPhotoRemoved(false) } catch (cause) { setPhotoError(cause.message); event.target.value = '' } }} /></div><small>JPG, PNG ou WebP. Foto otimizada e armazenada no cadastro do produto (até 400 KB).</small>{photoError && <small className="product-photo-error" role="alert">{photoError}</small>}</div>
   </div>
   <section className="product-cost-section">
     <div className="form-section-title"><span>01</span><div><h3>Ficha técnica e custos</h3><p>Selecione materiais cadastrados no Financeiro e informe quanto cada peça consome.</p></div></div>
     {materialsError && <div className="sales-error" role="alert">{materialsError}</div>}
-    <div className="form-grid form-grid-two"><label>Filamento usado<select value={form.filamentMaterialId} onChange={(event) => set('filamentMaterialId', event.target.value)}><option value="">Selecione o filamento</option>{form.filamentMaterialId && !materials.some((item) => item.id === form.filamentMaterialId) && <option value={form.filamentMaterialId}>{product?.filamentMaterialName || 'Filamento salvo'} · custo salvo</option>}{materials.filter((material) => material.baseUnit === 'g').map((material) => <option key={material.id} value={material.id}>{material.name} · {unitCostMoney(material.unitCost)}/g</option>)}</select></label><label>Cor do filamento<input type="color" value={form.filamentColor || '#000000'} onChange={(event) => set('filamentColor', event.target.value)} /><small>Escolha a cor usada para imprimir esta peça.</small></label><label>Filamento gasto (gramas)<input type="number" min="0" step="0.1" value={form.filamentGrams} onChange={(event) => set('filamentGrams', event.target.value)} /><small>Custo do filamento nesta peça: {money(filamentCost)}.</small></label></div>
+    <div className="form-grid form-grid-two"><label>Filamento usado<select value={form.filamentMaterialId} onChange={(event) => set('filamentMaterialId', event.target.value)}><option value="">Selecione o filamento</option>{form.filamentMaterialId && !materials.some((item) => item.id === form.filamentMaterialId) && <option value={form.filamentMaterialId}>{product?.filamentMaterialName || 'Filamento salvo'} · custo salvo</option>}{materials.filter((material) => material.baseUnit === 'g').map((material) => <option key={material.id} value={material.id}>{material.name} · {unitCostMoney(material.unitCost)}/g</option>)}</select></label><label>Cor do filamento<input type="color" value={form.filamentColor || '#000000'} onChange={(event) => set('filamentColor', event.target.value)} /><small>Escolha a cor usada para imprimir esta peça.</small></label><label>Filamento gasto (gramas)<input type="number" min="0" step="0.0001" value={form.filamentGrams} onChange={(event) => set('filamentGrams', event.target.value)} /><small>Informe até quatro casas decimais. Custo do filamento nesta peça: {money(filamentCost)}.</small></label></div>
     {materialsLoading ? <p className="product-cost-hint">Carregando materiais cadastrados no Financeiro…</p> : materials.length === 0 && form.recipe.length === 0 ? <p className="product-cost-hint">Cadastre primeiro seus materiais em Financeiro → Estoque de materiais.</p> : <div className="product-recipe-list">{form.recipe.map((line, index) => <div className={`product-recipe-row ${line.material?.baseUnit === 'm2' ? 'product-recipe-area-row' : ''}`} key={`${line.materialId}-${index}`}>
       <label>Material<select required value={line.materialId} onChange={(event) => changeRecipe(index, 'materialId', event.target.value)}><option value="">Selecione um material</option>{line.materialId && !materials.some((item) => item.id === line.materialId) && <option value={line.materialId}>{line.name || 'Material arquivado'} · custo salvo</option>}{materials.map((material) => <option key={material.id} value={material.id}>{material.name} · {unitCostMoney(material.unitCost)}/{formatUnit(material.baseUnit)}</option>)}</select></label>
       {line.material?.baseUnit === 'm2' ? <>
@@ -201,7 +254,7 @@ export default function ProductsPage() {
     <div className="product-tabs" role="tablist" aria-label="Produtos"><button role="tab" aria-selected={!showArchived} className={!showArchived ? 'product-tab-active' : ''} onClick={() => setShowArchived(false)}><span>Produtos 3D</span><b>{products.filter((item) => item.active !== false).length}</b></button><button role="tab" aria-selected={showArchived} className={showArchived ? 'product-tab-active' : ''} onClick={() => setShowArchived(true)}><span>Arquivados</span><b>{archivedCount}</b></button></div>
     <section className="panel products-panel"><div className="products-toolbar"><label className="search-field"><span aria-hidden="true">⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por produto, SKU ou categoria" /></label><span className="count-chip">{list.length} {list.length === 1 ? 'produto' : 'produtos'}</span></div>
       {error && <div className="sales-error" role="alert">{error}</div>}{materialsError && <div className="sales-error" role="alert">{materialsError}</div>}{actionError && <div className="sales-error" role="alert">{actionError}</div>}
-      {loading ? <div className="sales-loading">Carregando produtos…</div> : <div className="sales-table-scroll"><table className="sales-table products-table"><thead><tr><th>Produto</th><th>SKU</th><th>Estoque</th><th>Custo</th><th>Preço</th><th>Ações</th></tr></thead><tbody>{list.map((product) => <tr key={product.id} className={Number(product.quantity) <= Number(product.minStock) ? 'stock-low-row' : ''}><td>{product.filamentColor && <span aria-label={`Filamento ${product.filamentColor}`} title={`Cor do filamento: ${product.filamentColor}`} style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6, border: '1px solid #aaa', borderRadius: '50%', backgroundColor: product.filamentColor, verticalAlign: 'middle' }} />}<strong className="table-primary-text">{product.name}</strong><small>{showArchived ? 'Produto 3D · ' : ''}{product.category || 'Sem categoria'}{showArchived ? ' · Arquivado' : ''}</small></td><td>{product.sku || '—'}</td><td><strong>{Number(product.quantity) || 0}</strong><small>mínimo {Number(product.minStock) || 0}</small></td><td>{money(product.cost)}</td><td>{money(product.price)}</td><td><div className="sale-actions">{showArchived ? <button className="cancel-action" onClick={() => removeArchived(product)}>Excluir do banco</button> : <><button onClick={() => { setEditing(product); setFormOpen(true) }}>Editar</button><button className="cancel-action" onClick={() => archive(product)}>Arquivar</button></>}</div></td></tr>)}{list.length === 0 && <tr><td colSpan="6"><div className="table-empty"><strong>{search ? 'Nenhum produto encontrado' : showArchived ? 'Nenhum produto arquivado' : `Nenhum produto ${typeName(type).toLowerCase()} cadastrado`}</strong><span>{showArchived ? 'Produtos arquivados aparecerão aqui.' : 'Use “Novo produto” para cadastrar neste grupo.'}</span></div></td></tr>}</tbody></table></div>}
+      {loading ? <div className="sales-loading">Carregando produtos…</div> : <div className="sales-table-scroll"><table className="sales-table products-table"><thead><tr><th>Produto</th><th>SKU</th><th>Estoque</th><th>Custo</th><th>Preço</th><th>Ações</th></tr></thead><tbody>{list.map((product) => <tr key={product.id} className={Number(product.quantity) <= Number(product.minStock) ? 'stock-low-row' : ''}><td><ProductImage product={product} className="product-list-thumbnail" />{product.filamentColor && <span aria-label={`Filamento ${product.filamentColor}`} title={`Cor do filamento: ${product.filamentColor}`} style={{ display: 'inline-block', width: 11, height: 11, marginRight: 6, border: '1px solid #aaa', borderRadius: '50%', backgroundColor: product.filamentColor, verticalAlign: 'middle' }} />}<strong className="table-primary-text">{product.name}</strong><small>{showArchived ? 'Produto 3D · ' : ''}{product.category || 'Sem categoria'}{showArchived ? ' · Arquivado' : ''}</small></td><td>{product.sku || '—'}</td><td><strong>{Number(product.quantity) || 0}</strong><small>mínimo {Number(product.minStock) || 0}</small></td><td>{money(product.cost)}</td><td>{money(product.price)}</td><td><div className="sale-actions">{showArchived ? <button className="cancel-action" onClick={() => removeArchived(product)}>Excluir do banco</button> : <><button onClick={() => { setEditing(product); setFormOpen(true) }}>Editar</button><button className="cancel-action" onClick={() => archive(product)}>Arquivar</button></>}</div></td></tr>)}{list.length === 0 && <tr><td colSpan="6"><div className="table-empty"><strong>{search ? 'Nenhum produto encontrado' : showArchived ? 'Nenhum produto arquivado' : `Nenhum produto ${typeName(type).toLowerCase()} cadastrado`}</strong><span>{showArchived ? 'Produtos arquivados aparecerão aqui.' : 'Use “Novo produto” para cadastrar neste grupo.'}</span></div></td></tr>}</tbody></table></div>}
     </section>
     {formOpen && <ProductForm product={editing} type={type} materials={materials} materialsLoading={materialsLoading} materialsError={materialsError} onClose={() => { setFormOpen(false); setEditing(null) }} onSaved={saved} />}{toast && <div className="toast-success" role="status">{toast}</div>}
   </div>

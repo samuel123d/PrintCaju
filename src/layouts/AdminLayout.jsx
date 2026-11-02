@@ -14,33 +14,57 @@ import usePurchases from '../hooks/usePurchases.js'
 function DailySystemAlerts({ preferences }) {
   const { user } = useAuth()
   const { sales } = useExternalSales()
+  const { quotes } = useQuotes()
   const { products } = useProducts()
-  const current = new Date()
+  const { materials } = useFinancialMaterials()
+  const [current, setCurrent] = useState(() => new Date())
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrent(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
   const today = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
   const horizon = new Date(current.getFullYear(), current.getMonth(), current.getDate() + Number(preferences.dueAlertDays || 3))
   const until = `${horizon.getFullYear()}-${String(horizon.getMonth() + 1).padStart(2, '0')}-${String(horizon.getDate()).padStart(2, '0')}`
-  const counts = useMemo(() => {
-    const orders = preferences.dailyDueAlertsEnabled ? sales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered') : []
-    const low = preferences.lowStockAlertsEnabled ? products.filter((product) => product.active !== false && Number(product.quantity) <= Number(product.minStock)) : []
-    return {
-      overdue: orders.filter((sale) => sale.dueDate && sale.dueDate < today).length,
-      dueSoon: orders.filter((sale) => sale.dueDate && sale.dueDate >= today && sale.dueDate <= until).length,
-      lowStock: low.length,
-    }
-  }, [sales, products, today, until, preferences.dailyDueAlertsEnabled, preferences.lowStockAlertsEnabled])
+  const dueOrders = preferences.dailyDueAlertsEnabled ? sales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.dueDate) : []
+  const overdueSales = dueOrders.filter((sale) => sale.dueDate < today)
+  const dueSoonSales = dueOrders.filter((sale) => sale.dueDate >= today && sale.dueDate <= until)
+  const expiredQuotes = preferences.dailyDueAlertsEnabled ? quotes.filter((quote) => quote.status === 'open' && quote.validUntil && quote.validUntil < today) : []
+  const lowStockProducts = preferences.lowStockAlertsEnabled ? products.filter((product) => product.active !== false && Number(product.quantity) <= Number(product.minStock)) : []
+  const lowStockMaterials = preferences.lowStockAlertsEnabled ? materials.filter((material) => material.active !== false && Number(material.stockQuantity) <= Number(material.minStock)) : []
+  const lowStockCount = lowStockProducts.length + lowStockMaterials.length
+  const routes = {
+    overdue: '/producao?alert=overdue',
+    dueSoon: '/producao?alert=due-soon',
+    quotes: '/vendas?tab=quotes&alert=expired-quotes',
+    stock: '/estoque?alert=low-stock',
+  }
 
   useEffect(() => {
-    if (!user?.uid || !preferences.desktopNotificationsEnabled || (!counts.overdue && !counts.dueSoon && !counts.lowStock) || !('Notification' in window) || Notification.permission !== 'granted') return
+    if (!user?.uid || !preferences.desktopNotificationsEnabled || (!overdueSales.length && !dueSoonSales.length && !expiredQuotes.length && !lowStockCount) || !('Notification' in window) || Notification.permission !== 'granted') return
     const key = `printcaju-daily-alerts-${user.uid}-${today}`
     try {
       if (localStorage.getItem(key)) return
       localStorage.setItem(key, 'sent')
-      new Notification('Print Caju · Alertas diários', { body: `${counts.overdue} venda(s) atrasada(s), ${counts.dueSoon} próximo(s) do prazo e ${counts.lowStock} produto(s) com estoque baixo.`, icon: '/printcaju-mark.png' })
+      const notifications = [
+        [overdueSales.length, 'Entregas atrasadas', `${overdueSales.length} pedido(s) passaram do prazo e ainda não foram entregues.`, routes.overdue],
+        [dueSoonSales.length, 'Entrega em breve', `${dueSoonSales.length} pedido(s) devem ser entregues em até ${preferences.dueAlertDays} dia(s).`, routes.dueSoon],
+        [expiredQuotes.length, 'Orçamentos vencidos', `${expiredQuotes.length} orçamento(s) venceram e ainda não viraram venda.`, routes.quotes],
+        [lowStockCount, 'Estoque baixo', `${lowStockCount} produto(s) ou material(is) precisam de reposição.`, routes.stock],
+      ]
+      notifications.filter(([count]) => count).forEach(([, title, body, route]) => {
+        const notification = new Notification(`Print Caju · ${title}`, { body, icon: '/printcaju-mark.png', tag: `printcaju-${title}` })
+        notification.onclick = () => { window.focus(); window.location.href = route; notification.close() }
+      })
     } catch (cause) { console.warn('Não foi possível exibir a notificação do navegador.', cause) }
-  }, [user?.uid, today, counts.overdue, counts.dueSoon, counts.lowStock, preferences.desktopNotificationsEnabled])
+  }, [user?.uid, today, overdueSales.length, dueSoonSales.length, expiredQuotes.length, lowStockCount, preferences.dueAlertDays, preferences.desktopNotificationsEnabled])
 
-  if (!counts.overdue && !counts.dueSoon && !counts.lowStock) return null
-  return <div className="daily-order-alert" role="status"><strong>Alertas</strong><span>{counts.overdue ? `${counts.overdue} venda(s) atrasada(s)` : ''}{counts.overdue && counts.dueSoon ? ' · ' : ''}{counts.dueSoon ? `${counts.dueSoon} vencem em até ${preferences.dueAlertDays} dias` : ''}{(counts.overdue || counts.dueSoon) && counts.lowStock ? ' · ' : ''}{counts.lowStock ? `${counts.lowStock} produto(s) com estoque baixo` : ''}</span>{(counts.overdue || counts.dueSoon) && <Link to="/vendas">Ver vendas</Link>}{counts.lowStock > 0 && <Link to="/estoque">Ver estoque</Link>}</div>
+  if (!overdueSales.length && !dueSoonSales.length && !expiredQuotes.length && !lowStockCount) return null
+  return <div className="daily-order-alert" role="status"><strong>Alertas</strong><div className="daily-alert-links">
+    {overdueSales.length > 0 && <Link to={routes.overdue}>{overdueSales.length} entrega(s) atrasada(s) · Ver produção</Link>}
+    {dueSoonSales.length > 0 && <Link to={routes.dueSoon}>{dueSoonSales.length} pedido(s) com entrega em até {preferences.dueAlertDays} dia(s) · Ver produção</Link>}
+    {expiredQuotes.length > 0 && <Link to={routes.quotes}>{expiredQuotes.length} orçamento(s) vencido(s) · Ver orçamentos</Link>}
+    {lowStockCount > 0 && <Link to={routes.stock}>{lowStockCount} item(ns) com estoque baixo · Ver estoque</Link>}
+  </div></div>
 }
 
 const navigation = [

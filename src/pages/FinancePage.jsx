@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Bytes } from 'firebase/firestore'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import useExternalSales from '../hooks/useExternalSales.js'
 import useFinancialMaterials from '../hooks/useFinancialMaterials.js'
@@ -56,6 +57,7 @@ function dateLabel(value) {
   return new Intl.DateTimeFormat('pt-BR').format(new Date(year, month - 1, day))
 }
 function monthLabel(value) {
+  if (value === 'all') return 'Todo o período'
   if (!value) return ''
   const [year, month] = value.split('-').map(Number)
   return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1))
@@ -70,6 +72,39 @@ function errorMessage(cause) {
   if (cause.code === 'permission-denied') return 'O Firestore bloqueou o lançamento. Confira se as regras permitem gravar em users/{uid}/financialTransactions.'
   if (cause.code === 'unavailable' || cause.code === 'network-request-failed') return 'Sem conexão com o Firestore. Verifique sua internet e tente novamente.'
   return cause.message || 'Não foi possível salvar o lançamento. Confira os dados e tente novamente.'
+}
+
+async function compressMaterialPhoto(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Escolha uma imagem JPG, PNG ou WebP.')
+  if (file.size > 8 * 1024 * 1024) throw new Error('A imagem original deve ter até 8 MB.')
+  const bitmap = await createImageBitmap(file)
+  try {
+    for (const edge of [960, 800, 640, 512, 384, 256]) {
+      const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      for (const quality of [0.8, 0.68, 0.55, 0.4]) {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality))
+        if (!blob) throw new Error('Não foi possível preparar a imagem.')
+        if (blob.size <= 350 * 1024) return new File([blob], 'material.webp', { type: 'image/webp' })
+      }
+    }
+  } finally { bitmap.close() }
+  throw new Error('Não foi possível reduzir a imagem para menos de 350 KB.')
+}
+
+function StoredPhoto({ item, className = '' }) {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    const bytes = item?.photoBytes?.toUint8Array?.()
+    if (!bytes?.length) { setSrc(''); return undefined }
+    const url = URL.createObjectURL(new Blob([bytes], { type: item.photoContentType || 'image/webp' }))
+    setSrc(url)
+    return () => URL.revokeObjectURL(url)
+  }, [item?.photoBytes, item?.photoContentType])
+  return src ? <img className={className} src={src} alt={`Foto de ${item.name}`} /> : null
 }
 
 function SummaryCard({ title, value, detail, tone }) {
@@ -229,9 +264,20 @@ export default function FinancePage() {
   const { transactions, loading: transactionsLoading, error: transactionsError } = useFinancialTransactions()
   const { materials, loading: materialsLoading, error: materialsError } = useFinancialMaterials()
   const { products, loading: productsLoading, error: productsError } = useProducts()
-  const [month, setMonth] = useState(localMonth)
+  const [month, setMonth] = useState('all')
   const [form, setForm] = useState(emptyForm)
   const [materialForm, setMaterialForm] = useState(emptyMaterialForm)
+  const [materialPhotoFile, setMaterialPhotoFile] = useState(null)
+  const [materialPhotoPreview, setMaterialPhotoPreview] = useState('')
+  const [materialPhotoRemoved, setMaterialPhotoRemoved] = useState(false)
+  const [materialPhotoError, setMaterialPhotoError] = useState('')
+  const materialPhotoInput = useRef(null)
+  useEffect(() => {
+    if (!materialPhotoFile) { setMaterialPhotoPreview(''); return undefined }
+    const url = URL.createObjectURL(materialPhotoFile)
+    setMaterialPhotoPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [materialPhotoFile])
   const [editingId, setEditingId] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingMaterial, setSavingMaterial] = useState(false)
@@ -242,8 +288,8 @@ export default function FinancePage() {
   const [error, setError] = useState('')
 
   const report = useMemo(() => {
-    const monthSales = sales.filter((sale) => sale.status !== 'cancelled' && sale.soldAt?.startsWith(month))
-    const monthTransactions = transactions.filter((entry) => entry.date?.startsWith(month))
+    const monthSales = sales.filter((sale) => sale.status !== 'cancelled' && (month === 'all' || sale.soldAt?.startsWith(month)))
+    const monthTransactions = transactions.filter((entry) => month === 'all' || entry.date?.startsWith(month))
     const activeTransactions = monthTransactions.filter((entry) => entry.status !== 'cancelled')
     const salesReceived = monthSales.reduce((total, sale) => total + amount(sale.receivedAmount), 0)
     const saleFees = monthSales.reduce((total, sale) => total + amount(sale.fees), 0)
@@ -328,10 +374,19 @@ export default function FinancePage() {
       baseUnit: selectedUnit.baseUnit,
       baseQuantity,
     }
+    if (materialPhotoFile) {
+      purchase.photoBytes = Bytes.fromUint8Array(new Uint8Array(await materialPhotoFile.arrayBuffer()))
+      purchase.photoContentType = materialPhotoFile.type
+    } else if (materialPhotoRemoved) {
+      purchase.photoBytes = null
+      purchase.photoContentType = null
+    }
     setSavingMaterial(true)
     try {
       await createMaterialPurchase(workspaceUid, purchase, user.uid, selectedMaterial?.id || '')
       setMaterialForm(emptyMaterialForm())
+      setMaterialPhotoFile(null)
+      setMaterialPhotoRemoved(false)
       setMessage('Material cadastrado, estoque atualizado e compra lançada como despesa.')
     } catch (cause) {
       setError(errorMessage(cause))
@@ -394,7 +449,7 @@ export default function FinancePage() {
   const purchaseUnitCost = purchasedBaseQuantity > 0 ? amount(materialForm.packageCost) / purchasedBaseQuantity : 0
 
   return <div className="page-stack finance-page">
-    <div className="page-intro finance-intro"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h2>Financeiro</h2><p>Veja o que entrou, o que saiu e o resultado do período.</p></div><label className="finance-month-picker">Período<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label></div>
+    <div className="page-intro finance-intro"><div><p className="eyebrow">CONTROLE FINANCEIRO</p><h2>Financeiro</h2><p>Veja o que entrou, o que saiu e o resultado do período.</p></div><div className="finance-period-controls"><label>Período<select value={month === 'all' ? 'all' : 'month'} onChange={(event) => setMonth(event.target.value === 'all' ? 'all' : localMonth())}><option value="all">Todo o período</option><option value="month">Selecionar mês</option></select></label>{month !== 'all' && <label>Mês<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>}</div></div>
 
     {(loadError || materialsError) && <div className="sales-error" role="alert">{loadError || materialsError}</div>}
     {(message || error) && <div className={`alert ${error ? 'alert-error' : 'alert-success'}`} role={error ? 'alert' : 'status'}>{error || message}</div>}
@@ -403,7 +458,7 @@ export default function FinancePage() {
       <SummaryCard title="Recebido das vendas" value={loading ? '…' : loadError ? '—' : money(report.salesReceived)} detail="Pagamentos recebidos em vendas ativas" tone="income" />
       <SummaryCard title="Outras receitas" value={loading ? '…' : loadError ? '—' : money(report.otherIncome)} detail="Entradas manuais, incluindo aportes" tone="other" />
       <SummaryCard title="Despesas e taxas" value={loading ? '…' : loadError ? '—' : money(report.expenses)} detail={`${money(report.manualExpenses)} despesas · ${money(report.saleFees)} taxas das vendas`} tone="expense" />
-      <SummaryCard title="Saldo do mês" value={loading ? '…' : loadError ? '—' : money(report.balance)} detail="Movimentação líquida, incluindo aportes" tone="balance" />
+      <SummaryCard title={month === 'all' ? 'Saldo do período' : 'Saldo do mês'} value={loading ? '…' : loadError ? '—' : money(report.balance)} detail="Movimentação líquida, incluindo aportes" tone="balance" />
     </section>
 
     <section className="panel finance-control-panel" aria-labelledby="finance-control-heading">
@@ -460,8 +515,12 @@ export default function FinancePage() {
           const selected = materials.find((item) => item.id === materialId)
           const packageUnit = selected ? purchaseUnits.find((unit) => unit.baseUnit === selected.baseUnit)?.value || 'unidade' : 'kg'
           setMaterialForm((current) => ({ ...current, materialId, packageUnit, packageWidth: '', packageLength: '' }))
+          setMaterialPhotoFile(null)
+          setMaterialPhotoRemoved(false)
+          setMaterialPhotoError('')
         }}><option value="">Cadastrar material novo</option>{materials.map((material) => <option key={material.id} value={material.id}>{material.name}</option>)}</select></label>
         {materialForm.materialId ? <div className="material-selected-summary"><strong>{materials.find((item) => item.id === materialForm.materialId)?.name}</strong><small>Estoque: {Number(materials.find((item) => item.id === materialForm.materialId)?.stockQuantity || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {formatUnit(materials.find((item) => item.id === materialForm.materialId)?.baseUnit)}</small></div> : <label className="finance-description-field">Nome do material<input required maxLength={120} value={materialForm.name} onChange={(event) => setMaterialForm((current) => ({ ...current, name: event.target.value }))} placeholder="Ex.: Filamento PLA" /></label>}
+        <div className="material-photo-control"><div className="material-photo-preview">{materialPhotoPreview ? <img src={materialPhotoPreview} alt="Prévia da foto do material" /> : !materialPhotoRemoved && selectedMaterial?.photoBytes ? <StoredPhoto item={selectedMaterial} /> : <span>Sem foto</span>}</div><div><strong>Foto do material</strong><small>Ajuda a identificar o insumo no estoque.</small><div className="product-photo-actions"><button type="button" className="button button-secondary" onClick={() => materialPhotoInput.current?.click()}>{selectedMaterial?.photoBytes && !materialPhotoRemoved ? 'Trocar foto' : 'Adicionar foto'}</button>{(materialPhotoFile || (selectedMaterial?.photoBytes && !materialPhotoRemoved)) && <button type="button" className="button button-quiet" onClick={() => { setMaterialPhotoFile(null); setMaterialPhotoRemoved(true); setMaterialPhotoError(''); if (materialPhotoInput.current) materialPhotoInput.current.value = '' }}>Remover foto</button>}</div><input ref={materialPhotoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setMaterialPhotoError(''); try { setMaterialPhotoFile(await compressMaterialPhoto(file)); setMaterialPhotoRemoved(false) } catch (cause) { setMaterialPhotoError(cause.message); event.target.value = '' } }} />{materialPhotoError && <small className="product-photo-error" role="alert">{materialPhotoError}</small>}</div></div>
         <label>Data da compra<input type="date" required value={materialForm.date} onChange={(event) => setMaterialForm((current) => ({ ...current, date: event.target.value }))} /></label>
         <label>{selectedPurchaseUnit?.dimensions ? 'Quantidade de rolos/placas' : 'Quantidade comprada'}<input type="number" min="0.001" step="any" required value={materialForm.packageQuantity} onChange={(event) => setMaterialForm((current) => ({ ...current, packageQuantity: event.target.value }))} /></label>
         <label>Unidade<select value={materialForm.packageUnit} onChange={(event) => {
@@ -498,7 +557,7 @@ export default function FinancePage() {
 
     <section className="panel finance-ledger-panel finance-history-ledger">
       <header className="finance-section-heading finance-ledger-heading"><div><p className="eyebrow">HISTÓRICO</p><h3>Lançamentos de {monthLabel(month)}</h3><p>Vendas aparecem no resumo; esta lista mostra receitas adicionais e despesas manuais.</p></div><span className="count-chip">{report.monthTransactions.length} registros</span></header>
-      {transactionsLoading ? <div className="sales-loading">Carregando lançamentos…</div> : report.monthTransactions.length === 0 ? <div className="finance-empty"><span aria-hidden="true">＋</span><strong>Nenhum lançamento manual neste mês</strong><small>Use o formulário acima para registrar despesas ou outras receitas.</small></div> : <div className="finance-table-scroll"><table className="finance-table"><thead><tr><th>Data</th><th>Lançamento</th><th>Categoria</th><th>Pagamento</th><th>Status</th><th className="finance-amount-column">Valor</th><th>Ações</th></tr></thead><tbody>{report.monthTransactions.map((entry) => {
+      {transactionsLoading ? <div className="sales-loading">Carregando lançamentos…</div> : report.monthTransactions.length === 0 ? <div className="finance-empty"><span aria-hidden="true">＋</span><strong>Nenhum lançamento manual {month === 'all' ? 'no período' : 'neste mês'}</strong><small>Use o formulário acima para registrar despesas ou outras receitas.</small></div> : <div className="finance-table-scroll"><table className="finance-table"><thead><tr><th>Data</th><th>Lançamento</th><th>Categoria</th><th>Pagamento</th><th>Status</th><th className="finance-amount-column">Valor</th><th>Ações</th></tr></thead><tbody>{report.monthTransactions.map((entry) => {
         const cancelled = entry.status === 'cancelled'
         const materialPurchase = Boolean(entry.sourceMaterialPurchaseId)
         const canImportStock = entry.type === 'expense' && ['materials', 'packaging'].includes(entry.category) && !materialPurchase && !cancelled

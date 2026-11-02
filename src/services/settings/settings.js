@@ -12,6 +12,9 @@ export const DEFAULT_PREFERENCES = {
   lowStockAlertsEnabled: true,
   desktopNotificationsEnabled: false,
   businessName: 'Print Caju',
+  weeklySalesGoal: 1250,
+  monthlySalesGoal: 5000,
+  annualSalesGoal: 60000,
 }
 
 export const DEFAULT_BUSINESS_DETAILS = {

@@ -187,6 +187,7 @@ export function createMaterialPurchase(uid, purchase, createdBy = uid, materialI
       unitCost,
       active: true,
       updatedAt: serverTimestamp(),
+      ...(Object.hasOwn(purchase, 'photoBytes') ? { photoBytes: purchase.photoBytes, photoContentType: purchase.photoContentType } : {}),
     }
 
     if (current) {

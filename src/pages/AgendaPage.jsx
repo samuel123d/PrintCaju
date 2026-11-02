@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { GoogleAuthProvider, linkWithPopup, reauthenticateWithPopup } from 'firebase/auth'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { auth } from '../services/firebase/config.js'
 import { createAgendaItem, removeAgendaItem, updateAgendaItem, watchAgendaItems } from '../services/agenda/agenda.js'
@@ -68,6 +69,8 @@ function googleEventBody(item) {
 }
 
 export default function AgendaPage() {
+  const [searchParams] = useSearchParams()
+  const alertItemId = searchParams.get('item') || ''
   const { user, workspaceUid } = useAuth()
   const [items, setItems] = useState([])
   const itemsRef = useRef([])
@@ -100,6 +103,13 @@ export default function AgendaPage() {
   }, [workspaceUid])
 
   useEffect(() => {
+    if (!alertItemId || loading || !items.some((item) => item.id === alertItemId)) return undefined
+    setFilter('all')
+    const timer = window.setTimeout(() => document.getElementById(`agenda-item-${alertItemId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+    return () => window.clearTimeout(timer)
+  }, [alertItemId, items, loading])
+
+  useEffect(() => {
     setSelectedItemIds((current) => new Set([...current].filter((id) => items.some((item) => item.id === id))))
   }, [items])
 
@@ -112,7 +122,8 @@ export default function AgendaPage() {
         const key = `printcaju-agenda-${user.uid}-${item.id}`
         if (localStorage.getItem(key)) return
         localStorage.setItem(key, 'sent')
-        new Notification(item.type === 'meeting' ? 'Reunião na agenda' : 'Lembrete de tarefa', { body: `${item.title}${item.time ? ` · ${item.time}` : ''}`, icon: '/printcaju-mark.png' })
+        const notification = new Notification(item.type === 'meeting' ? 'Reunião na agenda' : 'Lembrete de tarefa', { body: `${item.title}${item.time ? ` · ${item.time}` : ''}`, icon: '/printcaju-mark.png' })
+        notification.onclick = () => { window.focus(); window.location.href = `/agenda?item=${encodeURIComponent(item.id)}`; notification.close() }
       })
     }
     check()
@@ -436,7 +447,7 @@ export default function AgendaPage() {
         </div>}
         {loading ? <div className="agenda-empty">Carregando sua agenda…</div> : visibleItems.length === 0 ? <div className="agenda-empty"><span>✓</span><strong>{filter === 'all' ? 'Sua agenda está vazia' : `Nenhum item ${statusLabels[filter]?.toLowerCase() || ''}`}</strong><small>Adicione uma tarefa, reunião ou lembrete para começar.</small></div> : <div className="agenda-items">{visibleItems.map((item) => {
           const status = statusOf(item)
-          return <article className={`agenda-item agenda-item-${status}`} key={item.id}>
+          return <article id={`agenda-item-${item.id}`} className={`agenda-item agenda-item-${status} ${alertItemId === item.id ? 'agenda-item-alert-target' : ''}`} key={item.id}>
             {selectionMode && <label className="agenda-item-select" aria-label={`Selecionar ${item.title}`}><input type="checkbox" checked={selectedItemIds.has(item.id)} onChange={() => toggleItemSelection(item.id)} /></label>}
             <div className="agenda-item-copy"><div className="agenda-item-title"><strong>{item.title}</strong>{item.priority === 'high' && !['completed', 'cancelled'].includes(status) && <span className="agenda-priority">Alta</span>}</div><div className="agenda-item-meta"><span className={`agenda-type agenda-type-${item.type}`}>{item.type === 'meeting' ? 'Reunião' : item.type === 'reminder' ? 'Lembrete' : 'Tarefa'}</span><span>{dateLabel(item.date)}{item.time ? ` · ${item.time}` : ''}</span><span className={`agenda-status-pill agenda-status-${status}`}>{statusLabels[status]}</span>{item.googleEventId ? <span className="agenda-synced" title="Este item foi enviado e está vinculado ao Google Agenda">✓ Conectado ao Google Agenda</span> : <span className="agenda-not-synced" title="Este item ainda não foi enviado ao Google Agenda">Ainda não enviado ao Google Agenda</span>}</div>{item.details && <p>{item.details}</p>}</div>
             <div className="agenda-item-actions"><button className="agenda-edit-action" aria-label={`Editar ${item.title}`} title="Editar item" onClick={() => startEdit(item)}>Editar</button>{status !== 'completed' && status !== 'cancelled' && <select aria-label={`Alterar status de ${item.title}`} value={status} onChange={(event) => changeStatus(item, event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>}<button className="agenda-delete-action" aria-label={`Excluir ${item.title} da agenda e do banco de dados`} title="Excluir da agenda e do banco de dados" onClick={() => deleteItem(item)}>Excluir</button></div>

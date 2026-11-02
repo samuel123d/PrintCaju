@@ -15,6 +15,8 @@ import FinancePage from './pages/FinancePage.jsx'
 import ReportsPage from './pages/ReportsPage.jsx'
 import AgendaPage from './pages/AgendaPage.jsx'
 import ClientsPage from './pages/ClientsPage.jsx'
+import PublicCustomerFormPage from './pages/PublicCustomerFormPage.jsx'
+import PublicGoogleFormPage from './pages/PublicGoogleFormPage.jsx'
 
 function RouteContent() {
   const { user, isAdmin, loading, signOut } = useAuth()
@@ -40,6 +42,8 @@ function RouteContent() {
 
   return (
     <Routes>
+      <Route path="/formulario-cliente/:token" element={<PublicCustomerFormPage />} />
+      <Route path="/cadastro-cliente" element={<PublicGoogleFormPage />} />
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route element={user ? <AdminLayout /> : <Navigate to="/login" replace />}>
         <Route index element={<DashboardPage />} />

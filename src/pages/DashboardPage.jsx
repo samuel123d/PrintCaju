@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import useExternalSales from '../hooks/useExternalSales.js'
 import useProducts from '../hooks/useProducts.js'
 import useFinancialTransactions from '../hooks/useFinancialTransactions.js'
+import usePreferences from '../hooks/usePreferences.js'
 import { calculateFinancialControl } from '../services/finance/control.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { watchAgendaItems } from '../services/agenda/agenda.js'
@@ -33,37 +34,97 @@ function FinanceCards({ sales, loading, error }) {
   return <div className="metric-grid">{labels.map(([label, detail, icon, tone], index) => <article className="metric-card" key={label}><div className="metric-card-top"><span>{label}</span><span className={`metric-icon metric-${tone}`}>{icon}</span></div><strong className="metric-value">{loading ? '…' : error ? '—' : money(totals[index])}</strong><small>{error ? 'Falha ao carregar vendas' : loading ? 'Carregando registros…' : detail}</small></article>)}</div>
 }
 
-function MonthBars({ transactions, month }) {
-  const points = Array.from({ length: 6 }, (_, index) => {
-    const date = new Date(month.getFullYear(), month.getMonth() - (5 - index), 1)
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-    const monthRows = transactions.filter((row) => row.status !== 'cancelled' && row.date?.startsWith(key))
-    return {
-      key,
-      label: new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(date).replace('.', ''),
-      income: monthRows.filter((row) => row.type === 'income').reduce((sum, row) => sum + Number(row.amount || 0), 0),
-      expense: monthRows.filter((row) => row.type === 'expense').reduce((sum, row) => sum + Number(row.amount || 0), 0),
-    }
+function SalesGoals({ sales, loading, error, preferences }) {
+  const now = new Date()
+  const today = dateKey(now)
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
+  const end = new Date(start)
+  end.setDate(end.getDate() + 6)
+  const key = (date) => dateKey(date)
+  const weekStart = key(start)
+  const weekEnd = key(end)
+  const year = String(now.getFullYear())
+  const active = sales.filter((sale) => sale.status !== 'cancelled')
+  const total = (rows) => rows.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
+  const periods = [
+    { label: 'Esta semana', range: `${weekStart} a ${weekEnd}`, value: total(active.filter((sale) => sale.soldAt >= weekStart && sale.soldAt <= weekEnd)), target: Number(preferences.weeklySalesGoal) || 0 },
+    { label: 'Este mês', range: new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(now), value: total(active.filter((sale) => sale.soldAt?.startsWith(today.slice(0, 7)))), target: Number(preferences.monthlySalesGoal) || 0 },
+    { label: 'Este ano', range: year, value: total(active.filter((sale) => sale.soldAt?.startsWith(year))), target: Number(preferences.annualSalesGoal) || 0 },
+  ]
+  return <section className="panel dashboard-sales-goals" aria-labelledby="dashboard-goals-heading">
+    <div className="panel-heading"><div><h2 id="dashboard-goals-heading">Metas de vendas</h2><p>Acompanhe o valor vendido e o progresso das metas por período.</p></div><Link className="text-link" to="/vendas">Gerenciar metas <span>→</span></Link></div>
+    <div className="dashboard-goals-grid">{periods.map((period) => { const progress = period.target > 0 ? Math.min(100, period.value / period.target * 100) : 0; return <article className="dashboard-goal-card" key={period.label}>
+      <div><span>{period.label}</span><small>{period.range}</small></div><strong>{loading ? '…' : error ? '—' : money(period.value)}</strong><small>{period.target > 0 ? `Meta ${money(period.target)}` : 'Meta não definida'}</small><div className="sales-goal-track" role="progressbar" aria-label={`Progresso da meta ${period.label.toLocaleLowerCase('pt-BR')}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div><small>{period.target > 0 ? `${Math.floor(progress)}% alcançado` : 'Defina a meta em Vendas'}</small>
+    </article> })}</div>
+  </section>
+}
+
+const monthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+
+function SalesAnalytics({ sales }) {
+  const [clientQuery, setClientQuery] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const active = sales.filter((sale) => sale.status !== 'cancelled')
+  const filtered = active.filter((sale) => {
+    const name = sale.client?.name || 'Cliente'
+    return (!clientQuery || name.toLocaleLowerCase('pt-BR').includes(clientQuery.trim().toLocaleLowerCase('pt-BR')))
+      && (!dateFrom || sale.soldAt >= dateFrom) && (!dateTo || sale.soldAt <= dateTo)
   })
-  const max = Math.max(1, ...points.flatMap((point) => [point.income, point.expense]))
-  return <div className="dashboard-bars" aria-label="Entradas e saídas dos últimos seis meses">{points.map((point) => <div className="dashboard-bar-month" key={point.key}>
-    <div className="dashboard-bar-pair" title={`${point.label}: ${money(point.income)} em entradas e ${money(point.expense)} em saídas`}>
-      <span className="dashboard-bar-income" style={{ height: `${Math.max(3, point.income / max * 100)}%` }} />
-      <span className="dashboard-bar-expense" style={{ height: `${Math.max(3, point.expense / max * 100)}%` }} />
-    </div><small>{point.label}</small>
-  </div>)}</div>
+  const now = new Date()
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - 11 + index, 1)
+    const key = monthKey(date)
+    return { key, label: new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(date).replace('.', ''), count: filtered.filter((sale) => sale.soldAt?.startsWith(key)).length }
+  })
+  const maxMonth = Math.max(1, ...months.map((month) => month.count))
+  const byClient = Object.values(filtered.reduce((groups, sale) => {
+    const name = (sale.client?.name || 'Cliente sem nome').trim()
+    groups[name] ||= { name, count: 0, total: 0 }
+    groups[name].count += 1
+    groups[name].total += Number(sale.total) || 0
+    return groups
+  }, {})).sort((a, b) => b.count - a.count)
+  const topClients = byClient.slice(0, 5)
+  const colors = ['#e48723', '#43864e', '#657db5', '#ba70a2', '#37a4a0']
+  const all = filtered.length
+  const plannedDays = filtered.filter((sale) => sale.soldAt && sale.dueDate).map((sale) => Math.max(0, (new Date(`${sale.dueDate}T00:00:00`) - new Date(`${sale.soldAt}T00:00:00`)) / 86400000))
+  const averageDays = plannedDays.length ? plannedDays.reduce((sum, days) => sum + days, 0) / plannedDays.length : null
+  const chartTotal = topClients.reduce((sum, client) => sum + client.count, 0)
+  const circumference = 2 * Math.PI * 45
+  return <section className="panel sales-analytics" aria-labelledby="sales-analytics-heading">
+    <div className="panel-heading"><div><h2 id="sales-analytics-heading">Análise de vendas e clientes</h2><p>Compare meses, pedidos por cliente e prazo médio previsto de entrega.</p></div><span className="period-chip">{all} pedidos no filtro</span></div>
+    <div className="sales-analytics-filters"><label>Buscar cliente<input type="search" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Digite o nome do cliente" /></label><label>De<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label><label>Até<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label><button type="button" className="button button-secondary" onClick={() => { setClientQuery(''); setDateFrom(''); setDateTo('') }}>Limpar filtros</button></div>
+    <div className="sales-analytics-kpis"><article><small>Pedidos</small><strong>{all}</strong></article><article><small>Faturamento</small><strong>{money(filtered.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0))}</strong></article><article><small>Clientes únicos</small><strong>{byClient.length}</strong></article><article><small>Prazo previsto médio</small><strong>{averageDays === null ? '—' : `${averageDays.toFixed(1).replace('.', ',')} dias`}</strong></article></div>
+    <div className="sales-analytics-charts"><article className="sales-analytics-chart"><h3>Pedidos por mês</h3><div className="sales-month-bars">{months.map((item) => {
+      const [year, month] = item.key.split('-').map(Number)
+      const from = `${item.key}-01`
+      const to = `${item.key}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`
+      const selected = dateFrom === from && dateTo === to
+      return <button type="button" key={item.key} className={`sales-month-bar${selected ? ' is-selected' : ''}`} aria-pressed={selected} title={`${item.label}/${item.key.slice(0,4)}: ${item.count} pedidos. Clique para filtrar este m?s.`} onClick={() => { if (selected) { setDateFrom(''); setDateTo('') } else { setDateFrom(from); setDateTo(to) } }}><span><i style={{ height: `${item.count ? Math.max(5, item.count / maxMonth * 100) : 2}%` }} /></span><small>{item.label}</small></button>
+    })}</div></article>
+      <article className="sales-analytics-chart"><h3>Pedidos por cliente</h3>{topClients.length ? <div className="sales-client-chart"><div className="sales-client-donut" role="img" aria-label={`Gr?fico interativo: ${chartTotal} pedidos entre os cinco principais clientes`}><svg viewBox="0 0 120 120" aria-label="Selecione uma fatia para filtrar por cliente">{topClients.map((client, index) => {
+        const segment = chartTotal ? client.count / chartTotal * circumference : 0
+        const offset = topClients.slice(0, index).reduce((sum, item) => sum + (chartTotal ? item.count / chartTotal * circumference : 0), 0)
+        const selected = clientQuery.trim().toLocaleLowerCase('pt-BR') === client.name.toLocaleLowerCase('pt-BR')
+        return <circle key={client.name} cx="60" cy="60" r="45" fill="none" stroke={colors[index % colors.length]} strokeWidth="25" strokeDasharray={`${segment} ${circumference - segment}`} strokeDashoffset={-offset} transform="rotate(-90 60 60)" className={selected ? 'is-selected' : ''} role="button" tabIndex="0" aria-label={`${client.name}: ${client.count} pedidos. Clique para filtrar.`} aria-pressed={selected} onClick={() => setClientQuery(selected ? '' : client.name)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setClientQuery(selected ? '' : client.name) } }} />
+      })}</svg><span>{chartTotal}<small>top pedidos</small></span></div><div className="sales-client-legend">{topClients.map((client, index) => <button type="button" key={client.name} className="sales-client-legend-item" aria-pressed={clientQuery.trim().toLocaleLowerCase('pt-BR') === client.name.toLocaleLowerCase('pt-BR')} title={`Filtrar por ${client.name}`} onClick={() => setClientQuery(clientQuery.trim().toLocaleLowerCase('pt-BR') === client.name.toLocaleLowerCase('pt-BR') ? '' : client.name)}><i style={{ background: colors[index % colors.length] }} /><span>{client.name}</span><strong>{client.count}</strong></button>)}{byClient.length > 5 && <small>Exibindo 5 de {byClient.length} clientes</small>}</div></div> : <div className="dashboard-empty-small">Nenhuma venda para os filtros selecionados.</div>}</article></div>
+  </section>
 }
 
 export default function DashboardPage() {
   const { sales, loading: salesLoading, error: salesError } = useExternalSales()
   const { products, loading: productsLoading } = useProducts()
   const { transactions, loading: financeLoading, error: financeError } = useFinancialTransactions()
+  const { preferences } = usePreferences()
   const { workspaceUid } = useAuth()
   const [agendaItems, setAgendaItems] = useState([])
   const [agendaLoading, setAgendaLoading] = useState(true)
   const now = new Date()
   const today = dateKey(now)
-  const month = today.slice(0, 7)
+  const [period, setPeriod] = useState('all')
+  const month = period === 'all' ? null : period
 
   useEffect(() => {
     if (!workspaceUid) { setAgendaItems([]); setAgendaLoading(false); return undefined }
@@ -75,13 +136,10 @@ export default function DashboardPage() {
   const lateOrders = activeSales.filter((sale) => sale.dueDate && sale.dueDate < today && sale.deliveryStatus !== 'delivered')
   const lowStock = products.filter((product) => product.active !== false && Number(product.quantity) <= Number(product.minStock))
   const unfinishedAgenda = agendaItems.filter((item) => ['open', 'in_progress'].includes(itemStatus(item)))
-  const monthTransactions = transactions.filter((row) => row.status !== 'cancelled' && row.date?.startsWith(month))
-  const income = monthTransactions.filter((row) => row.type === 'income').reduce((sum, row) => sum + Number(row.amount || 0), 0)
-  const expenses = monthTransactions.filter((row) => row.type === 'expense').reduce((sum, row) => sum + Number(row.amount || 0), 0)
   const financialControl = calculateFinancialControl({ sales, transactions, products, month })
   const agendaSoon = useMemo(() => unfinishedAgenda.filter((item) => item.date >= today).sort((a, b) => `${a.date}T${a.time || ''}`.localeCompare(`${b.date}T${b.time || ''}`)).slice(0, 5), [unfinishedAgenda, today])
   const recentSales = useMemo(() => [...activeSales].sort((a, b) => (b.soldAt || '').localeCompare(a.soldAt || '')).slice(0, 5), [activeSales])
-  const monthLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(now)
+  const monthLabel = month ? new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1)) : 'Todo o período'
 
   return <div className="page-stack dashboard-page">
     <section className="welcome-banner">
@@ -90,9 +148,12 @@ export default function DashboardPage() {
     </section>
 
     <section aria-labelledby="finance-heading">
-      <div className="section-heading"><div><h2 id="finance-heading">Resumo das vendas externas</h2><p>Calculado a partir dos registros persistidos no Firestore</p></div><Link className="period-chip dashboard-period-link" to="/vendas">Ver vendas ↗</Link></div>
+      <div className="section-heading dashboard-period-heading"><div><h2 id="finance-heading">Resumo das vendas externas</h2><p>Visão consolidada dos registros persistidos no Firestore</p></div><div className="dashboard-period-controls"><label>Período<select value={period === 'all' ? 'all' : 'month'} onChange={(event) => setPeriod(event.target.value === 'all' ? 'all' : today.slice(0, 7))}><option value="all">Todo o período</option><option value="month">Selecionar mês</option></select></label>{period !== 'all' && <label>Mês<input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} /></label>}<Link className="period-chip dashboard-period-link" to="/vendas">Ver vendas ↗</Link></div></div>
       <FinanceCards sales={sales} loading={salesLoading} error={salesError} />
     </section>
+
+    <SalesGoals sales={sales} loading={salesLoading} error={salesError} preferences={preferences} />
+    {salesLoading ? <section className="panel sales-analytics"><div className="dashboard-loading">Carregando análise de vendas…</div></section> : <SalesAnalytics sales={sales} />}
 
     <section aria-labelledby="operation-heading">
       <div className="section-heading"><div><h2 id="operation-heading">Visão da operação</h2><p>O que precisa de atenção hoje</p></div><span className="period-chip">Atualizado em tempo real</span></div>
@@ -100,7 +161,7 @@ export default function DashboardPage() {
         <Link to="/vendas" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-blue">▤</span><span><small>Vendas externas</small><strong>{salesLoading ? '…' : activeSales.length}</strong><em>{lateOrders.length ? `${lateOrders.length} atrasado(s)` : 'Nenhum atraso'}</em></span></Link>
         <Link to="/estoque" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-orange">▦</span><span><small>Estoque baixo</small><strong>{productsLoading ? '…' : lowStock.length}</strong><em>{lowStock.length ? 'Produto(s) precisam de reposição' : 'Tudo dentro do mínimo'}</em></span></Link>
         <Link to="/agenda" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-purple">◷</span><span><small>Tarefas em aberto</small><strong>{agendaLoading ? '…' : unfinishedAgenda.length}</strong><em>{agendaItems.filter((item) => itemStatus(item) === 'in_progress').length} em andamento</em></span></Link>
-        <Link to="/financeiro" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-green">R$</span><span><small>Saldo livre do mês</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.freeCash)}</strong><em>{monthLabel}</em></span></Link>
+        <Link to="/financeiro" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-green">R$</span><span><small>Saldo livre do período</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.freeCash)}</strong><em>{monthLabel}</em></span></Link>
       </div>
     </section>
 
@@ -111,20 +172,12 @@ export default function DashboardPage() {
         <div><small>Lucro operacional de caixa</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.operatingResult)}</strong><em>Entradas menos despesas e taxas; sem aportes</em></div>
         <div><small>Disponível para gastar</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.freeCash)}</strong><em>{financeError || salesError ? 'Falha ao carregar os dados financeiros' : financialControl.freeCash < 0 ? 'Caixa abaixo das saídas registradas' : 'Caixa após separar a reposição; inclui aportes'}</em></div>
       </div>
-      <p className="dashboard-cash-note">Estimativa baseada nos registros do mês; não representa o saldo bancário e não inclui saldo inicial não lançado. Sem histórico das parcelas, recebimentos são atribuídos ao mês da venda.</p>
+      <p className="dashboard-cash-note">Estimativa baseada nos registros de {monthLabel.toLocaleLowerCase('pt-BR')}; não representa o saldo bancário e não inclui saldo inicial não lançado. Sem histórico das parcelas, recebimentos são atribuídos ao mês da venda.</p>
     </section>
 
-    <section className="dashboard-grid dashboard-detail-grid">
-      <article className="panel chart-panel dashboard-finance-panel">
-        <div className="panel-heading"><div><h2>Financeiro do mês</h2><p>Entradas e saídas registradas · {monthLabel}</p></div><Link className="text-link" to="/financeiro">Abrir financeiro <span>→</span></Link></div>
-        <div className="dashboard-month-summary"><div><small>Entradas</small><strong>{financeLoading ? '…' : money(income)}</strong></div><div><small>Saídas</small><strong>{financeLoading ? '…' : money(expenses)}</strong></div><div><small>Lançamentos</small><strong>{financeLoading ? '…' : monthTransactions.length}</strong></div></div>
-        {financeLoading ? <div className="dashboard-loading">Carregando movimentações…</div> : <MonthBars transactions={transactions} month={now} />}
-        <div className="chart-legend"><span><i className="legend-revenue" />Entradas</span><span><i className="legend-expense" />Saídas</span></div>
-      </article>
-      <article className="panel orders-summary dashboard-recent-panel">
+    <section className="panel orders-summary dashboard-recent-panel">
         <div className="panel-heading"><div><h2>Vendas recentes</h2><p>Últimos registros ativos</p></div><Link className="text-link" to="/vendas">Ver todas <span>→</span></Link></div>
         {salesLoading ? <div className="dashboard-loading">Carregando vendas…</div> : recentSales.length ? <div className="dashboard-recent-list">{recentSales.map((sale) => <div className="dashboard-recent-row" key={sale.id}><span className="dashboard-recent-avatar">{(sale.client?.name || 'C').charAt(0).toUpperCase()}</span><span className="dashboard-recent-copy"><strong>{sale.client?.name || 'Cliente'}</strong><small>{sale.soldAt ? formatDate(sale.soldAt) : 'Data não informada'} · {sale.deliveryStatus === 'delivered' ? 'Entregue' : 'Em andamento'}</small></span><b>{money(sale.total)}</b></div>)}</div> : <div className="dashboard-empty-small">Ainda não há vendas registradas.</div>}
-      </article>
     </section>
 
     <section className="panel dashboard-agenda-panel">

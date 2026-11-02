@@ -62,15 +62,43 @@ export default function SettingsPage() {
   const [passwordBusy, setPasswordBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [saveError, setSaveError] = useState('')
+  const [installPrompt, setInstallPrompt] = useState(null)
+  const [appInstalled, setAppInstalled] = useState(false)
+  const [installHelp, setInstallHelp] = useState(false)
 
   useEffect(() => { setPreferences(savedPreferences); applyBrandPreferences(savedPreferences) }, [savedPreferences])
   useEffect(() => setProfileForm({ displayName: profile.displayName ?? user?.displayName ?? '', email: user?.email ?? '', photoURL: profile.photoURL ?? user?.photoURL ?? '' }), [profile, user])
   useEffect(() => setBusinessForm(business), [business])
+  useEffect(() => {
+    setAppInstalled(window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true)
+    const handleInstallPrompt = (event) => { event.preventDefault(); setInstallPrompt(event) }
+    const handleInstalled = () => { setAppInstalled(true); setInstallPrompt(null) }
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt)
+    window.addEventListener('appinstalled', handleInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleInstallPrompt)
+      window.removeEventListener('appinstalled', handleInstalled)
+    }
+  }, [])
 
   function changePreference(key, value) {
     const next = { ...preferences, [key]: value }
     setPreferences(next)
     if (key === 'accentColor' || key === 'fontScale') applyBrandPreferences(next)
+  }
+  async function installApp() {
+    setInstallHelp(true)
+    if (!installPrompt) return
+    try {
+      await installPrompt.prompt()
+      const choice = await installPrompt.userChoice
+      if (choice?.outcome === 'accepted') { setAppInstalled(true); setInstallHelp(false) }
+      else setInstallHelp(true)
+    } catch {
+      setInstallHelp(true)
+    } finally {
+      setInstallPrompt(null)
+    }
   }
   function clearMessages() { setMessage(''); setSaveError('') }
 
@@ -187,14 +215,18 @@ export default function SettingsPage() {
     </section>
 
     <section className="panel settings-section"><header className="settings-section-heading"><span className="settings-section-icon">03</span><div><h3>Alertas da operação</h3><p>Escolha quais avisos aparecem no painel e quando recebê-los.</p></div></header>
-      <form onSubmit={saveVisualSettings} className="settings-alert-options"><label className="settings-toggle-row"><span><strong>Alertas de prazo de pedidos</strong><small>Mostra pedidos atrasados e os próximos do vencimento.</small></span><input type="checkbox" checked={preferences.dailyDueAlertsEnabled} onChange={(event) => changePreference('dailyDueAlertsEnabled', event.target.checked)} /></label>
+      <form onSubmit={saveVisualSettings} className="settings-alert-options"><label className="settings-toggle-row"><span><strong>Alertas de prazo de pedidos</strong><small>Avisa sobre o prazo de entrega antes do vencimento e destaca entregas atrasadas.</small></span><input type="checkbox" checked={preferences.dailyDueAlertsEnabled} onChange={(event) => changePreference('dailyDueAlertsEnabled', event.target.checked)} /></label>
         <label className="settings-alert-days"><span>Alertar pedidos com prazo em até</span><select value={preferences.dueAlertDays} onChange={(event) => changePreference('dueAlertDays', Number(event.target.value))}><option value="1">1 dia</option><option value="3">3 dias</option><option value="5">5 dias</option><option value="7">7 dias</option><option value="14">14 dias</option></select></label>
         <label className="settings-toggle-row"><span><strong>Alertas de estoque baixo</strong><small>Avisa quando um produto atinge ou fica abaixo do mínimo.</small></span><input type="checkbox" checked={preferences.lowStockAlertsEnabled} onChange={(event) => changePreference('lowStockAlertsEnabled', event.target.checked)} /></label>
         <div className="settings-notification-row"><div><strong>Notificações do navegador</strong><small>Receba um resumo diário quando o sistema estiver aberto.</small></div><button type="button" className="button button-secondary" onClick={enableBrowserNotifications}>{preferences.desktopNotificationsEnabled ? 'Permissão ativada' : 'Ativar notificações'}</button></div>
         <button className="button button-primary" disabled={preferencesBusy}>{preferencesBusy ? 'Salvando…' : 'Salvar preferências de alertas'}</button>
       </form>
     </section>
-    <section className="panel settings-section"><header className="settings-section-heading"><span className="settings-section-icon">04</span><div><h3>Dados da empresa</h3><p>Essas informações aparecem nos orçamentos e comprovantes comerciais. CPF/CNPJ é opcional.</p></div></header>
+    <section className="panel settings-section app-install-section"><header className="settings-section-heading"><span className="settings-section-icon">04</span><div><h3>Aplicativo para celular</h3><p>Instale o Print Caju pelo site na tela inicial para abrir em uma janela própria, como um aplicativo.</p></div></header>
+      <div className="app-install-content"><div className="app-install-icon"><img src="/icons/icon-192.png" alt="" /></div><div className="app-install-copy"><strong>{appInstalled ? 'Print Caju instalado neste dispositivo' : 'Acesse suas vendas e sua produção pelo celular'}</strong><small>O app usa sua conta habitual e os dados sincronizados do sistema. Para instalar, use um navegador compatível e mantenha a conexão com a internet.</small>{installHelp && !appInstalled && <small className="app-install-help">{/iphone|ipad|ipod/i.test(navigator.userAgent) ? 'No Safari, toque em Compartilhar e escolha “Adicionar à Tela de Início”.' : 'No Android, use o Chrome ou Edge e escolha “Instalar aplicativo” ou “Adicionar à tela inicial” no menu do navegador.'}</small>}</div><button type="button" className="button button-primary" onClick={installApp} disabled={appInstalled}>{appInstalled ? 'Instalado' : installPrompt ? 'Instalar aplicativo' : 'Ver como instalar'}</button></div>
+      <p className="app-install-note">No Android compatível, o botão abre a confirmação nativa de instalação do navegador. Se ela não estiver disponível, use Chrome ou Edge e escolha “Instalar aplicativo” no menu. No iPhone, use Safari e “Adicionar à Tela de Início”.</p>
+    </section>
+    <section className="panel settings-section"><header className="settings-section-heading"><span className="settings-section-icon">05</span><div><h3>Dados da empresa</h3><p>Essas informações aparecem nos orçamentos e comprovantes comerciais. CPF/CNPJ é opcional.</p></div></header>
       {businessLoading ? <div className="sales-loading">Carregando dados da empresa…</div> : <form className="settings-company-form" onSubmit={saveCompanySettings}>
         <label>Nome ou razão social<input required maxLength={120} value={businessForm.name} onChange={(event) => setBusinessForm((current) => ({ ...current, name: event.target.value }))} /></label>
         <label>CPF/CNPJ <span className="optional-label">opcional</span><input inputMode="numeric" maxLength={18} value={formatBrazilianTaxId(businessForm.taxId)} onChange={(event) => setBusinessForm((current) => ({ ...current, taxId: formatBrazilianTaxId(event.target.value) }))} placeholder="000.000.000-00 ou 00.000.000/0000-00" /></label>
