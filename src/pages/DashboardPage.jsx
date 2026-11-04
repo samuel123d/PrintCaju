@@ -5,6 +5,7 @@ import useProducts from '../hooks/useProducts.js'
 import useFinancialTransactions from '../hooks/useFinancialTransactions.js'
 import usePreferences from '../hooks/usePreferences.js'
 import { calculateFinancialControl } from '../services/finance/control.js'
+import { calculateSalesGoalTotals } from '../services/sales/salesGoals.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { watchAgendaItems } from '../services/agenda/agenda.js'
 
@@ -36,24 +37,14 @@ function FinanceCards({ sales, loading, error }) {
 
 function SalesGoals({ sales, loading, error, preferences }) {
   const now = new Date()
-  const today = dateKey(now)
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
-  const end = new Date(start)
-  end.setDate(end.getDate() + 6)
-  const key = (date) => dateKey(date)
-  const weekStart = key(start)
-  const weekEnd = key(end)
-  const year = String(now.getFullYear())
-  const active = sales.filter((sale) => sale.status !== 'cancelled')
-  const total = (rows) => rows.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
+  const { weekStart, weekEnd, yearKey, weeklySalesTotal, monthlySalesTotal, annualSalesTotal } = calculateSalesGoalTotals(sales, now)
   const periods = [
-    { label: 'Esta semana', range: `${weekStart} a ${weekEnd}`, value: total(active.filter((sale) => sale.soldAt >= weekStart && sale.soldAt <= weekEnd)), target: Number(preferences.weeklySalesGoal) || 0 },
-    { label: 'Este mês', range: new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(now), value: total(active.filter((sale) => sale.soldAt?.startsWith(today.slice(0, 7)))), target: Number(preferences.monthlySalesGoal) || 0 },
-    { label: 'Este ano', range: year, value: total(active.filter((sale) => sale.soldAt?.startsWith(year))), target: Number(preferences.annualSalesGoal) || 0 },
+    { label: 'Esta semana', range: `${weekStart} a ${weekEnd}`, value: weeklySalesTotal, target: Number(preferences.weeklySalesGoal) || 0 },
+    { label: 'Este mês', range: new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(now), value: monthlySalesTotal, target: Number(preferences.monthlySalesGoal) || 0 },
+    { label: 'Este ano', range: yearKey, value: annualSalesTotal, target: Number(preferences.annualSalesGoal) || 0 },
   ]
   return <section className="panel dashboard-sales-goals" aria-labelledby="dashboard-goals-heading">
-    <div className="panel-heading"><div><h2 id="dashboard-goals-heading">Metas de vendas</h2><p>Acompanhe o valor vendido e o progresso das metas por período.</p></div><Link className="text-link" to="/vendas">Gerenciar metas <span>→</span></Link></div>
+    <div className="panel-heading"><div><h2 id="dashboard-goals-heading">Metas de vendas</h2><p>Acompanhe as vendas acumuladas até hoje dentro de cada período.</p></div><Link className="text-link" to="/vendas">Gerenciar metas <span>→</span></Link></div>
     <div className="dashboard-goals-grid">{periods.map((period) => { const progress = period.target > 0 ? Math.min(100, period.value / period.target * 100) : 0; return <article className="dashboard-goal-card" key={period.label}>
       <div><span>{period.label}</span><small>{period.range}</small></div><strong>{loading ? '…' : error ? '—' : money(period.value)}</strong><small>{period.target > 0 ? `Meta ${money(period.target)}` : 'Meta não definida'}</small><div className="sales-goal-track" role="progressbar" aria-label={`Progresso da meta ${period.label.toLocaleLowerCase('pt-BR')}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div><small>{period.target > 0 ? `${Math.floor(progress)}% alcançado` : 'Defina a meta em Vendas'}</small>
     </article> })}</div>

@@ -19,6 +19,7 @@ const categories = {
     ['investment', 'Aporte no negócio'],
   ],
   expense: [
+    ['investment', 'Investimento'],
     ['materials', 'Materiais e insumos'],
     ['packaging', 'Embalagens'],
     ['shipping', 'Frete e entrega'],
@@ -28,7 +29,7 @@ const categories = {
     ['other', 'Outra despesa'],
   ],
 }
-const categoryLabels = Object.fromEntries(Object.values(categories).flat())
+const categoryLabel = (entry) => categories[entry.type]?.find(([value]) => value === entry.category)?.[1] || 'Outro'
 const paymentLabels = { pix: 'Pix', cash: 'Dinheiro', transfer: 'Transferência', debit: 'Cartão de débito', credit: 'Cartão de crédito', other: 'Outro' }
 
 function localDate() {
@@ -63,7 +64,7 @@ function monthLabel(value) {
   return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1))
 }
 function emptyForm() {
-  return { type: 'expense', date: localDate(), description: '', category: 'materials', amount: '', paymentMethod: 'pix', notes: '' }
+  return { type: 'expense', date: localDate(), description: '', category: 'materials', amount: '', paymentMethod: 'pix', paymentStatus: 'paid', notes: '' }
 }
 function emptyMaterialForm() {
   return { materialId: '', name: '', date: localDate(), packageQuantity: '1', packageUnit: 'kg', packageWidth: '', packageLength: '', dimensionUnit: 'cm', packageCost: '', minStock: '0', paymentMethod: 'pix' }
@@ -294,9 +295,11 @@ export default function FinancePage() {
     const salesReceived = monthSales.reduce((total, sale) => total + amount(sale.receivedAmount), 0)
     const saleFees = monthSales.reduce((total, sale) => total + amount(sale.fees), 0)
     const otherIncome = activeTransactions.filter((entry) => entry.type === 'income').reduce((total, entry) => total + amount(entry.amount), 0)
-    const manualExpenses = activeTransactions.filter((entry) => entry.type === 'expense').reduce((total, entry) => total + amount(entry.amount), 0)
+    const expenseEntries = activeTransactions.filter((entry) => entry.type === 'expense')
+    const manualExpenses = expenseEntries.filter((entry) => entry.paymentStatus !== 'pending').reduce((total, entry) => total + amount(entry.amount), 0)
+    const pendingExpenses = expenseEntries.filter((entry) => entry.paymentStatus === 'pending').reduce((total, entry) => total + amount(entry.amount), 0)
     const expenses = saleFees + manualExpenses
-    return { monthTransactions, salesReceived, saleFees, otherIncome, manualExpenses, expenses, balance: salesReceived + otherIncome - expenses }
+    return { monthTransactions, salesReceived, saleFees, otherIncome, manualExpenses, pendingExpenses, expenses, balance: salesReceived + otherIncome - expenses }
   }, [month, sales, transactions])
   const control = useMemo(
     () => calculateFinancialControl({ sales, transactions, products, month }),
@@ -310,9 +313,23 @@ export default function FinancePage() {
 
   function startEdit(entry) {
     setEditingId(entry.id)
-    setForm({ type: entry.type, date: entry.date, description: entry.description, category: entry.category, amount: String(entry.amount), paymentMethod: entry.paymentMethod || 'other', notes: entry.notes || '' })
+    setForm({ type: entry.type, date: entry.date, description: entry.description, category: entry.category, amount: String(entry.amount), paymentMethod: entry.paymentMethod || 'other', paymentStatus: entry.paymentStatus || 'paid', notes: entry.notes || '' })
     setMessage('')
     setError('')
+  }
+
+  async function markExpensePaid(entry) {
+    setBusyId(entry.id)
+    setMessage('')
+    setError('')
+    try {
+      await updateFinancialTransaction(workspaceUid, entry.id, { paymentStatus: 'paid' })
+      setMessage(`Despesa “${entry.description}” marcada como paga.`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusyId('')
+    }
   }
 
   async function submit(event) {
@@ -330,6 +347,7 @@ export default function FinancePage() {
       category: form.category,
       amount: Number(amount(form.amount).toFixed(2)),
       paymentMethod: form.paymentMethod,
+      paymentStatus: form.type === 'expense' ? form.paymentStatus : 'paid',
       notes: form.notes.trim(),
     }
     setSaving(true)
@@ -461,6 +479,8 @@ export default function FinancePage() {
       <SummaryCard title={month === 'all' ? 'Saldo do período' : 'Saldo do mês'} value={loading ? '…' : loadError ? '—' : money(report.balance)} detail="Movimentação líquida, incluindo aportes" tone="balance" />
     </section>
 
+    {report.pendingExpenses > 0 && <p className="finance-pending-summary">Despesas pendentes de pagamento: <strong>{money(report.pendingExpenses)}</strong>. Elas só entram nos totais de caixa quando forem marcadas como pagas.</p>}
+
     <section className="panel finance-control-panel" aria-labelledby="finance-control-heading">
       <header className="finance-section-heading"><div><p className="eyebrow">DECISÃO DE CAIXA</p><h3 id="finance-control-heading">Controle de finanças</h3><p>Separe primeiro as despesas e taxas registradas; o saldo livre é o que sobrou das entradas recebidas no período.</p></div><span className="count-chip">{monthLabel(month)}</span></header>
       {productsError && <div className="sales-error" role="alert">{productsError} Os custos por pedido podem estar incompletos.</div>}
@@ -502,6 +522,7 @@ export default function FinancePage() {
         <label>Categoria<select value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}>{categories[form.type].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label>Valor (R$)<input type="number" min="0.01" step="0.01" required value={form.amount} onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))} placeholder="0,00" /></label>
         <label>Forma de pagamento<select value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{Object.entries(paymentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {form.type === 'expense' && <label>Situação do pagamento<select value={form.paymentStatus} onChange={(event) => setForm((current) => ({ ...current, paymentStatus: event.target.value }))}><option value="paid">Pago</option><option value="pending">Pendente</option></select></label>}
         <label className="finance-notes-field">Observação <span className="optional-label">opcional</span><input maxLength={240} value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Detalhes para seu controle" /></label>
         <div className="finance-form-actions">{editingId && <button className="button button-secondary" type="button" onClick={resetForm}>Cancelar edição</button>}<button className="button button-primary" disabled={saving}>{saving ? 'Salvando…' : editingId ? 'Salvar alterações' : 'Salvar lançamento'}</button></div>
       </form>
@@ -564,9 +585,9 @@ export default function FinancePage() {
         return [<tr className={cancelled ? 'finance-voided-row' : ''} key={entry.id}>
           <td>{dateLabel(entry.date)}</td>
           <td><strong>{entry.description}</strong>{entry.notes && <small>{entry.notes}</small>}</td>
-          <td>{categoryLabels[entry.category] || 'Outro'}</td>
+          <td>{categoryLabel(entry)}</td>
           <td>{paymentLabels[entry.paymentMethod] || 'Outro'}</td>
-          <td><span className={`finance-kind finance-kind-${entry.type}`}>{cancelled ? 'Estornado' : entry.type === 'income' ? 'Receita' : 'Despesa'}</span></td>
+          <td><span className={`finance-kind finance-kind-${entry.type}`}>{cancelled ? 'Estornado' : entry.type === 'income' ? 'Receita' : entry.paymentStatus === 'pending' ? 'Pendente' : 'Pago'}</span>{!cancelled && entry.type === 'expense' && entry.paymentStatus === 'pending' && <button type="button" className="finance-row-pay-action" disabled={busyId === entry.id} onClick={() => markExpensePaid(entry)}>{busyId === entry.id ? 'Salvando…' : 'Marcar como paga'}</button>}</td>
           <td className={`finance-amount finance-amount-${entry.type}`}>{entry.type === 'income' ? '+' : '−'} {money(entry.amount)}</td>
           <td><div className="finance-row-actions"><button type="button" disabled={cancelled || busyId === entry.id || saving} onClick={() => materialPurchase ? setEditingHistoryId(editingHistoryId === entry.id ? '' : entry.id) : startEdit(entry)}>{materialPurchase ? editingHistoryId === entry.id ? 'Fechar edição' : 'Editar quantidade' : 'Editar'}</button><button type="button" className="finance-void-action" title={materialPurchase ? 'Estornar não é permitido para uma compra vinculada ao estoque.' : undefined} disabled={materialPurchase || cancelled || busyId === entry.id || saving} onClick={() => voidEntry(entry)}>{busyId === entry.id ? 'Processando…' : 'Estornar'}</button><button type="button" className="finance-void-action" disabled={busyId === entry.id || saving || (cancelled && materialPurchase)} onClick={() => deleteEntry(entry)}>{busyId === entry.id ? 'Excluindo…' : 'Excluir'}</button>{canImportStock && <button type="button" onClick={() => setImportingHistoryId(importingHistoryId === entry.id ? '' : entry.id)}>{importingHistoryId === entry.id ? 'Fechar estoque' : 'Incluir no estoque'}</button>}</div></td>
         </tr>, ...(importingHistoryId === entry.id && canImportStock ? [<HistoryStockImport key={`${entry.id}-stock-import`} entry={entry} materials={materials} onCancel={() => setImportingHistoryId('')} onImported={(successMessage) => { setImportingHistoryId(''); setMessage(successMessage) }} />] : []), ...(editingHistoryId === entry.id && materialPurchase && !cancelled ? [<HistoryStockEditor key={`${entry.id}-stock-edit`} entry={entry} onCancel={() => setEditingHistoryId('')} onSaved={(successMessage) => { setEditingHistoryId(''); setMessage(successMessage) }} />] : [])]

@@ -487,6 +487,10 @@ input, select, textarea { accent-color: var(--accent); }
 .finance-row-actions button { padding: 4px 0; border: 0; background: transparent; color: var(--accent-text, var(--accent)); font-size: 9px; font-weight: 700; }
 .finance-row-actions .finance-void-action { color: #a74b3c; }
 .finance-row-actions button:disabled { cursor: not-allowed; opacity: .5; }
+.finance-row-pay-action { display: block; margin-top: 6px; padding: 5px 7px; border: 1px solid #cfe2d1; border-radius: 6px; background: #f4faf3; color: #3e7547; font-size: 9px; font-weight: 700; }
+.finance-row-pay-action:hover:not(:disabled) { background: #eaf5e8; }
+.finance-pending-summary { margin: -7px 0 0; padding: 10px 13px; border: 1px solid #ecd9ad; border-radius: 8px; background: #fff9eb; color: #715d32; font-size: 11px; line-height: 1.5; }
+.finance-pending-summary strong { color: #59451e; }
 .finance-footnote { margin: -8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .ml-sync-panel { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 20px; }
 .ml-sync-panel strong { color: var(--text); font-size: 13px; }

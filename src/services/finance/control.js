@@ -18,7 +18,9 @@ export function calculateFinancialControl({ sales, transactions, products, month
   const monthSales = sales.filter((sale) => sale.status !== 'cancelled' && (!month || month === 'all' || sale.soldAt?.startsWith(month)))
   const monthTransactions = transactions.filter((entry) => !month || month === 'all' || entry.date?.startsWith(month))
   const activeTransactions = monthTransactions.filter((entry) => entry.status !== 'cancelled')
-  const expenses = activeTransactions.filter((entry) => entry.type === 'expense')
+  const expenseEntries = activeTransactions.filter((entry) => entry.type === 'expense')
+  const expenses = expenseEntries.filter((entry) => entry.paymentStatus !== 'pending')
+  const pendingExpenses = expenseEntries.filter((entry) => entry.paymentStatus === 'pending')
   const incomes = activeTransactions.filter((entry) => entry.type === 'income')
   const salesReceived = monthSales.reduce((total, sale) => total + valueOf(sale.receivedAmount), 0)
   const saleFees = monthSales.reduce((total, sale) => total + valueOf(sale.fees), 0)
@@ -100,6 +102,7 @@ export function calculateFinancialControl({ sales, transactions, products, month
     operatingIncome,
     investmentIncome,
     expenses: expensesTotal,
+    pendingExpenses: pendingExpenses.reduce((total, entry) => total + valueOf(entry.amount), 0),
     saleFees,
     replenishment,
     operatingResult,

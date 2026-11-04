@@ -16,6 +16,17 @@ const dateLabel = (value) => {
 }
 const normalize = (value) => String(value || '').trim().toLocaleLowerCase('pt-BR')
 const onlyDigits = (value) => String(value || '').replace(/\D/g, '')
+function saleStatus(sale) {
+  if (sale.status === 'cancelled') return { label: 'Cancelado', className: 'delivery-shipped' }
+  if (sale.deliveryStatus === 'delivered') return { label: 'Entregue', className: 'delivery-delivered' }
+  if (sale.deliveryStatus === 'shipped') return { label: 'Enviado', className: 'delivery-shipped' }
+  if (sale.deliveryStatus === 'pickup') return { label: 'Retirada', className: 'delivery-pickup' }
+  if (sale.deliveryStatus === 'ready') return { label: 'Pronto', className: 'delivery-ready' }
+  if (sale.productionStatus === 'ready') return { label: 'Produção concluída', className: 'payment-paid' }
+  if (sale.productionStatus === 'producing') return { label: 'Em produção', className: 'delivery-preparing' }
+  if (sale.productionStatus === 'preparing' || sale.deliveryStatus === 'preparing') return { label: 'Em preparo', className: 'delivery-preparing' }
+  return { label: 'A combinar', className: 'delivery-pending' }
+}
 
 export default function ClientsPage() {
   const { workspaceUid } = useAuth()
@@ -166,7 +177,7 @@ export default function ClientsPage() {
       {salesLoading || quotesLoading ? <div className="sales-loading">Carregando histórico…</div> : <>
         <div className="client-history-summary"><span>{clientSales.length} pedidos/vendas</span><span>{clientQuotes.length} orçamentos</span><span>{clientSales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered').length} em andamento</span></div>
         <h4 className="client-history-subheading">Pedidos e vendas</h4>
-        {clientSales.length ? <div className="finance-table-scroll"><table className="finance-table client-history-table"><thead><tr><th>Pedido</th><th>Data</th><th>Itens</th><th>Entrega / status</th><th>Pagamento</th><th>Total</th></tr></thead><tbody>{clientSales.map((sale) => <tr key={sale.id}><td><strong>#{sale.id.slice(0, 7).toUpperCase()}</strong></td><td>{dateLabel(sale.soldAt)}</td><td>{(sale.items || []).map((item) => `${item.description} × ${item.quantity}`).join(', ') || '—'}</td><td><span className={`status-pill ${sale.status === 'cancelled' ? 'delivery-shipped' : sale.deliveryStatus === 'delivered' ? 'delivery-delivered' : 'delivery-preparing'}`}>{sale.status === 'cancelled' ? 'Cancelado' : sale.deliveryStatus === 'delivered' ? 'Entregue' : sale.deliveryStatus === 'preparing' || sale.productionStatus === 'preparing' || sale.productionStatus === 'producing' ? 'Em andamento' : sale.deliveryStatus === 'ready' ? 'Pronto' : 'A combinar'}</span></td><td>{sale.status === 'cancelled' ? 'Venda cancelada' : sale.paymentStatus === 'paid' ? 'Pago' : sale.paymentStatus === 'partial' ? 'Parcial' : 'Pendente'}</td><td>{money(sale.total)}</td></tr>)}</tbody></table></div> : <p className="client-history-empty">Nenhum pedido ou venda encontrado para este cliente.</p>}
+        {clientSales.length ? <div className="finance-table-scroll"><table className="finance-table client-history-table"><thead><tr><th>Pedido</th><th>Data</th><th>Itens</th><th>Entrega / status</th><th>Pagamento</th><th>Total</th></tr></thead><tbody>{clientSales.map((sale) => <tr key={sale.id}><td><strong>#{sale.id.slice(0, 7).toUpperCase()}</strong></td><td>{dateLabel(sale.soldAt)}</td><td>{(sale.items || []).map((item) => `${item.description} × ${item.quantity}`).join(', ') || '—'}</td><td><span className={`status-pill ${saleStatus(sale).className}`}>{saleStatus(sale).label}</span></td><td>{sale.status === 'cancelled' ? 'Venda cancelada' : sale.paymentStatus === 'paid' ? 'Pago' : sale.paymentStatus === 'partial' ? 'Parcial' : 'Pendente'}</td><td>{money(sale.total)}</td></tr>)}</tbody></table></div> : <p className="client-history-empty">Nenhum pedido ou venda encontrado para este cliente.</p>}
         <h4 className="client-history-subheading">Orçamentos</h4>
         {clientQuotes.length ? <div className="finance-table-scroll"><table className="finance-table client-history-table"><thead><tr><th>Orçamento</th><th>Emissão</th><th>Validade</th><th>Status</th><th>Total</th></tr></thead><tbody>{clientQuotes.map((quote) => <tr key={quote.id}><td><strong>{quote.quoteNumber || `ORC-${quote.id.slice(0, 8).toUpperCase()}`}</strong></td><td>{dateLabel(quote.quoteDate)}</td><td>{dateLabel(quote.validUntil)}</td><td>{quote.status === 'converted' ? 'Convertido em venda' : quote.status === 'cancelled' ? 'Cancelado' : quote.status === 'open' && quote.validUntil && quote.validUntil < new Date().toISOString().slice(0, 10) ? 'Vencido' : 'Aberto'}</td><td>{money(quote.total)}</td></tr>)}</tbody></table></div> : <p className="client-history-empty">Nenhum orçamento encontrado para este cliente.</p>}
       </>}

@@ -12,6 +12,7 @@ import { saveClient } from '../services/clients/clients.js'
 import { printSalesDocument } from '../services/sales/printDocument.js'
 import { formatBrazilianPhone, formatBrazilianTaxId } from '../utils/inputMasks.js'
 import { savePreferences } from '../services/settings/settings.js'
+import { calculateSalesGoalTotals } from '../services/sales/salesGoals.js'
 
 const channelLabels = { whatsapp: 'WhatsApp', instagram: 'Instagram', mercadolivre: 'Mercado Livre (manual)', presencial: 'Presencial', outro: 'Outro' }
 const paymentLabels = { pending: 'Pendente', partial: 'Parcial', paid: 'Recebido' }
@@ -22,16 +23,6 @@ const emptyItem = () => ({ productId: '', description: '', quantity: '1', unitPr
 function localToday() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-}
-
-function weekRange(dateValue) {
-  const [year, month, day] = dateValue.split('-').map(Number)
-  const start = new Date(year, month - 1, day)
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
-  const end = new Date(start)
-  end.setDate(end.getDate() + 6)
-  const key = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-  return [key(start), key(end)]
 }
 
 function datePlusDays(days) {
@@ -386,12 +377,7 @@ export default function ExternalSalesPage() {
   const activeSales = sales.filter((sale) => sale.status !== 'cancelled')
   const grossTotal = activeSales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
   const outstandingTotal = activeSales.reduce((sum, sale) => sum + (Number(sale.outstandingAmount) || 0), 0)
-  const monthKey = localToday().slice(0, 7)
-  const monthlySalesTotal = activeSales.filter((sale) => String(sale.soldAt || '').startsWith(monthKey)).reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
-  const [weekStart, weekEnd] = weekRange(localToday())
-  const weeklySalesTotal = activeSales.filter((sale) => sale.soldAt >= weekStart && sale.soldAt <= weekEnd).reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
-  const yearKey = localToday().slice(0, 4)
-  const annualSalesTotal = activeSales.filter((sale) => String(sale.soldAt || '').startsWith(yearKey)).reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
+  const { monthKey, weekStart, weekEnd, yearKey, weeklySalesTotal, monthlySalesTotal, annualSalesTotal } = calculateSalesGoalTotals(sales)
   const goalCards = [
     { key: 'week', label: 'da semana', heading: 'META DA SEMANA', total: weeklySalesTotal, value: weeklySalesGoal, setValue: setWeeklySalesGoal, range: `${weekStart} a ${weekEnd}` },
     { key: 'month', label: 'do mês', heading: 'META DO MÊS', total: monthlySalesTotal, value: salesGoal, setValue: setSalesGoal, range: new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1)) },
@@ -539,7 +525,7 @@ export default function ExternalSalesPage() {
 
             {activeTab === 'sales' && <section className="sales-goals-grid" aria-label="Metas de vendas">
         {goalCards.map((goal) => { const target = Math.max(0, amount(goal.value)); const progress = target > 0 ? Math.min(100, (goal.total / target) * 100) : 0; return <article className="panel sales-goal-card" key={goal.key}>
-          <div className="sales-goal-copy"><p className="eyebrow">{goal.heading}</p><h3>{target > 0 && goal.total >= target ? 'Meta alcançada!' : target > 0 ? `${Math.floor(progress)}% da meta` : 'Defina sua meta'}</h3><p>{money(goal.total)} de {target > 0 ? money(target) : '—'} em vendas ativas · {goal.range}</p><div className="sales-goal-track" role="progressbar" aria-label={`Progresso da meta ${goal.label}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div><small>{target > 0 ? `${Math.floor(progress)}% concluído${goal.total < target ? ` · faltam ${money(target - goal.total)}` : ' · objetivo alcançado!'}` : 'Informe um valor para acompanhar o progresso.'}</small></div>
+          <div className="sales-goal-copy"><p className="eyebrow">{goal.heading}</p><h3>{target > 0 && goal.total >= target ? 'Meta alcançada!' : target > 0 ? `${Math.floor(progress)}% da meta` : 'Defina sua meta'}</h3><p>{money(goal.total)} de {target > 0 ? money(target) : '—'} em vendas ativas acumuladas até hoje · {goal.range}</p><div className="sales-goal-track" role="progressbar" aria-label={`Progresso da meta ${goal.label}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div><small>{target > 0 ? `${Math.floor(progress)}% concluído${goal.total < target ? ` · faltam ${money(target - goal.total)}` : ' · objetivo alcançado!'}` : 'Informe um valor para acompanhar o progresso.'}</small></div>
           <form className="sales-goal-form" onSubmit={(event) => saveSalesGoal(goal.key, goal.value, event)}><label htmlFor={`sales-goal-${goal.key}`}>Meta {goal.label} (R$)</label><div><input id={`sales-goal-${goal.key}`} type="number" min="1" step="0.01" value={goal.value} onChange={(event) => goal.setValue(event.target.value)} /><button className="button button-secondary" disabled={goalSaving}>{goalSaving ? 'Salvando…' : 'Salvar'}</button></div>{goalMessage && <small role="status">{goalMessage}</small>}</form>
         </article> })}
       </section>}
