@@ -25,7 +25,7 @@ function DailySystemAlerts({ preferences }) {
   const today = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
   const horizon = new Date(current.getFullYear(), current.getMonth(), current.getDate() + Number(preferences.dueAlertDays || 3))
   const until = `${horizon.getFullYear()}-${String(horizon.getMonth() + 1).padStart(2, '0')}-${String(horizon.getDate()).padStart(2, '0')}`
-  const dueOrders = preferences.dailyDueAlertsEnabled ? sales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.dueDate) : []
+  const dueOrders = preferences.dailyDueAlertsEnabled ? sales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.productionStatus !== 'ready' && sale.dueDate) : []
   const overdueSales = dueOrders.filter((sale) => sale.dueDate < today)
   const dueSoonSales = dueOrders.filter((sale) => sale.dueDate >= today && sale.dueDate <= until)
   const expiredQuotes = preferences.dailyDueAlertsEnabled ? quotes.filter((quote) => quote.status === 'open' && quote.validUntil && quote.validUntil < today) : []

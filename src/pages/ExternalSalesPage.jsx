@@ -63,6 +63,8 @@ function dateLabel(value) {
   return new Intl.DateTimeFormat('pt-BR').format(new Date(year, month - 1, day))
 }
 
+const needsProductionOrDelivery = (sale) => sale.deliveryStatus !== 'delivered' && sale.productionStatus !== 'ready'
+
 function dateTimeLabel(value) {
   const date = value?.toDate ? value.toDate() : value ? new Date(value) : null
   return date && !Number.isNaN(date.getTime())
@@ -374,8 +376,8 @@ export default function ExternalSalesPage() {
       .some((value) => String(value ?? '').toLocaleLowerCase('pt-BR').includes(needle))
     const matchesChannel = channel === 'all' || sale.channel === channel
     const matchesState = stateFilter === 'all' || (stateFilter === 'active' ? sale.status !== 'cancelled' : sale.status === 'cancelled')
-    const matchesAlert = alertFilter === 'overdue' ? sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.dueDate && sale.dueDate < today
-      : alertFilter === 'due-soon' ? sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.dueDate && sale.dueDate >= today && sale.dueDate <= datePlusDays(Number(preferences.dueAlertDays || 3))
+    const matchesAlert = alertFilter === 'overdue' ? sale.status !== 'cancelled' && needsProductionOrDelivery(sale) && sale.dueDate && sale.dueDate < today
+      : alertFilter === 'due-soon' ? sale.status !== 'cancelled' && needsProductionOrDelivery(sale) && sale.dueDate && sale.dueDate >= today && sale.dueDate <= datePlusDays(Number(preferences.dueAlertDays || 3))
         : !alertFilter
     return matchesSearch && matchesChannel && matchesState && matchesAlert
   }), [sales, search, channel, stateFilter, alertFilter, today, preferences.dueAlertDays])
@@ -564,7 +566,7 @@ export default function ExternalSalesPage() {
         {loading ? <div className="sales-loading"><span className="spinner" />Carregando vendas…</div> : filteredSales.length === 0 ? (
           <div className="sales-empty"><span className="sales-empty-icon">↗</span><h3>{sales.length ? 'Nenhuma venda corresponde aos filtros' : 'Comece registrando uma venda'}</h3><p>{sales.length ? 'Ajuste a busca ou os filtros para ver os outros registros.' : 'As vendas ficarão salvas na sua conta e poderão ser consultadas por aqui.'}</p>{!sales.length && <button className="button button-secondary" onClick={startNewSale}>Registrar primeira venda</button>}</div>) : (
           <div className="sales-table-scroll"><table className="sales-table"><thead><tr><th>Venda</th><th>Cliente</th><th>Canal</th><th>Data</th><th>Pagamento</th><th>Entrega</th><th>Total</th><th>Ações</th></tr></thead><tbody>
-            {filteredSales.map((sale) => { const overdue = sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.dueDate && sale.dueDate < today; const daysLate = overdue ? Math.floor((new Date(`${today}T00:00:00`) - new Date(`${sale.dueDate}T00:00:00`)) / 86400000) : 0; return <tr key={sale.id} className={`${sale.status === 'cancelled' ? 'cancelled-row ' : ''}${overdue ? 'sale-overdue-row' : ''}`}>
+            {filteredSales.map((sale) => { const overdue = sale.status !== 'cancelled' && needsProductionOrDelivery(sale) && sale.dueDate && sale.dueDate < today; const daysLate = overdue ? Math.floor((new Date(`${today}T00:00:00`) - new Date(`${sale.dueDate}T00:00:00`)) / 86400000) : 0; return <tr key={sale.id} className={`${sale.status === 'cancelled' ? 'cancelled-row ' : ''}${overdue ? 'sale-overdue-row' : ''}`}>
               <td><strong className="sale-code">#{sale.id.slice(0, 7).toUpperCase()}</strong><small>{(sale.items ?? []).length} {(sale.items ?? []).length === 1 ? 'item' : 'itens'}</small></td>
               <td><strong className="table-primary-text">{sale.client?.name || 'Cliente'}</strong><small>{sale.client?.phone || sale.client?.email || 'Sem contato'}</small></td>
               <td>{channelLabels[sale.channel] || 'Outro'}</td><td>{dateLabel(sale.soldAt)}</td>

@@ -933,6 +933,18 @@ input, select, textarea { accent-color: var(--accent); }
 .production-deadline-label-soon { color: var(--accent-text,var(--accent)); }
 @media (max-width: 680px) { .production-deadline-summary { grid-template-columns: 1fr; }.production-deadline-banner { align-items: flex-start; flex-direction: column; } }
 
+@media (min-width: 801px) and (max-width: 1100px) {
+  .production-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .production-card { padding: 15px; }
+  .production-card select { min-height: 44px; }
+  .finance-form input, .finance-form select { min-height: 44px; }
+  .sales-filters select, .orders-toolbar select { min-height: 42px; }
+  .sales-summary-grid { gap: 10px; }
+}
+@media (min-width: 721px) and (max-width: 800px) {
+  .production-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Mobile app installation and shared tablet/phone layout refinements. */
 .app-install-section { grid-template-columns: minmax(0, 1fr); }
 .app-install-content { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; }

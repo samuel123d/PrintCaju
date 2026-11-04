@@ -133,7 +133,7 @@ export default function DashboardPage() {
   }, [workspaceUid])
 
   const activeSales = sales.filter((sale) => sale.status !== 'cancelled')
-  const lateOrders = activeSales.filter((sale) => sale.dueDate && sale.dueDate < today && sale.deliveryStatus !== 'delivered')
+  const lateOrders = activeSales.filter((sale) => sale.dueDate && sale.dueDate < today && sale.deliveryStatus !== 'delivered' && sale.productionStatus !== 'ready')
   const lowStock = products.filter((product) => product.active !== false && Number(product.quantity) <= Number(product.minStock))
   const unfinishedAgenda = agendaItems.filter((item) => ['open', 'in_progress'].includes(itemStatus(item)))
   const financialControl = calculateFinancialControl({ sales, transactions, products, month })
