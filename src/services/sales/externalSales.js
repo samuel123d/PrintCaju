@@ -2,6 +2,7 @@ import { collection, deleteDoc, doc, onSnapshot, orderBy, query, runTransaction,
 import { db } from '../firebase/config.js'
 import { getFunctions, httpsCallable } from 'firebase/functions'
 import { firebaseApp } from '../firebase/config.js'
+import { publicSiteProductData } from '../site.js'
 
 const functions = getFunctions(firebaseApp, 'southamerica-east1')
 
@@ -19,6 +20,14 @@ export async function loadPublicOrderForm(token) {
 
 export async function submitPublicOrderForm(token, profile) {
   return (await httpsCallable(functions, 'submitPublicOrderForm')({ token, profile })).data
+}
+
+export async function submitWebsiteCustomerRegistration(profile) {
+  return (await httpsCallable(functions, 'submitWebsiteCustomerRegistration')({ profile })).data
+}
+
+export async function createCustomerOrderRequest(items, requestId) {
+  return (await httpsCallable(functions, 'createCustomerOrderRequest')({ items, requestId })).data
 }
 
 function salesCollection(uid) {
@@ -66,6 +75,42 @@ export function createExternalSale(uid, sale, createdBy = uid) {
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     })
     return saleRef.id
+  })
+}
+
+export function approveWebsiteOrder(uid, saleId) {
+  const saleRef = doc(db, 'users', uid, 'externalSales', saleId)
+  return runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(saleRef)
+    if (!snapshot.exists()) throw new Error('A solicitação de compra não foi encontrada.')
+    const sale = snapshot.data()
+    if (sale.source !== 'website' || sale.orderApprovalStatus !== 'pending') {
+      throw new Error('Esta solicitação já foi confirmada ou não pode ser aprovada.')
+    }
+    const physicalItems = (Array.isArray(sale.items) ? sale.items : []).filter((item) => item?.productId)
+    const productSnapshots = await Promise.all(physicalItems.map((item) => transaction.get(doc(db, 'users', uid, 'products', item.productId))))
+    for (let index = 0; index < physicalItems.length; index += 1) {
+      const product = productSnapshots[index].data()
+      if (!productSnapshots[index].exists()) {
+        throw new Error(`O produto ${physicalItems[index].description || ''} não existe mais no estoque.`)
+      }
+      if (Number(product.price) !== Number(physicalItems[index].unitPrice)) {
+        throw new Error(`O preço de ${product.name || physicalItems[index].description} mudou desde a solicitação. Revise o pedido antes de confirmar.`)
+      }
+    }
+    await adjustProductDeltas(
+      transaction,
+      uid,
+      inventoryDeltas(sale.items, -1),
+      `Pedido do site #${saleId.slice(0, 7).toUpperCase()}`,
+      saleId,
+    )
+    transaction.update(saleRef, {
+      orderApprovalStatus: 'approved',
+      inventoryApplied: true,
+      notes: `${String(sale.notes || '').trim()}\nPedido aprovado pela Print Caju.`,
+      updatedAt: serverTimestamp(),
+    })
   })
 }
 
@@ -193,10 +238,11 @@ async function adjustProductDeltas(transaction, uid, deltas, reason, saleId) {
     const before = Number(product.quantity) || 0
     const after = before + row.delta
     if (after < 0) throw new Error(`Estoque insuficiente para ${product.name || 'um produto'}: disponível ${before}, solicitado ${Math.abs(row.delta)}.`)
-    return { ...row, productName: product.name || 'Produto', before, after }
+    return { ...row, product, productName: product.name || 'Produto', before, after }
   })
   for (const row of updates) {
     transaction.update(row.ref, { quantity: row.after, updatedAt: serverTimestamp() })
+    if (row.product.active !== false) transaction.set(doc(db, 'publicSiteProducts', row.productId), publicSiteProductData({ ...row.product, quantity: row.after }))
     transaction.set(row.movementRef, {
       productId: row.productId, productName: row.productName, delta: row.delta,
       before: row.before, after: row.after, reason, saleId, createdAt: serverTimestamp(),

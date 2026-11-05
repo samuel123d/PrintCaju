@@ -52,6 +52,7 @@ function onPrintCajuFormSubmit(event) {
     state: stateAnswer || parsedLocation.state,
     postalCode: answer(answers, ['cep', 'codigo postal']),
   }
+  profile.email = profile.email.trim().toLowerCase()
   if (!profile.name) throw new Error('Não encontrei a pergunta de nome na planilha. Confira os títulos das colunas.')
   if (!profile.phone && !profile.email) throw new Error('A resposta precisa ter telefone ou e-mail para identificar o cliente.')
 
@@ -67,7 +68,7 @@ function onPrintCajuFormSubmit(event) {
     phone: profile.phone,
     phoneDigits: digits(profile.phone),
     email: profile.email,
-    emailNormalized: profile.email.toLowerCase(),
+    emailNormalized: profile.email,
     address: profile.address,
     city: profile.city,
     state: profile.state.toUpperCase(),
@@ -111,12 +112,17 @@ function findExistingClient(workspaceUid, profile) {
 
   const taxId = digits(profile.taxId)
   const phone = digits(profile.phone)
-  const email = profile.email.toLowerCase()
+  const email = profile.email.trim().toLowerCase()
+  const emailMatches = candidates.filter((document) => {
+    const fields = document.fields || {}
+    return email && fieldString(fields.emailNormalized || fields.email).trim().toLowerCase() === email
+  })
+  if (emailMatches.length === 1) return emailMatches[0]
   const matches = candidates.filter((document) => {
     const fields = document.fields || {}
     const existingTaxId = fieldString(fields.taxIdDigits) || digits(fieldString(fields.taxId))
     const existingPhone = fieldString(fields.phoneDigits) || digits(fieldString(fields.phone))
-    const existingEmail = fieldString(fields.emailNormalized || fields.email).toLowerCase()
+    const existingEmail = fieldString(fields.emailNormalized || fields.email).trim().toLowerCase()
     return (taxId && existingTaxId === taxId) || (phone && existingPhone === phone) || (email && existingEmail === email)
   })
   if (matches.length <= 1) return matches[0] || null

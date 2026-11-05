@@ -7,14 +7,14 @@ import useExternalSales from '../hooks/useExternalSales.js'
 import useProducts from '../hooks/useProducts.js'
 import useQuotes from '../hooks/useQuotes.js'
 import usePreferences from '../hooks/usePreferences.js'
-import { cancelExternalSale, cancelQuote, convertQuoteToSale, createExternalSale, createQuote, deleteExternalSale, deleteQuote, restoreConvertedQuoteSale, updateExternalSale, updateQuote } from '../services/sales/externalSales.js'
+import { approveWebsiteOrder, cancelExternalSale, cancelQuote, convertQuoteToSale, createExternalSale, createQuote, deleteExternalSale, deleteQuote, restoreConvertedQuoteSale, updateExternalSale, updateQuote } from '../services/sales/externalSales.js'
 import { saveClient } from '../services/clients/clients.js'
 import { printSalesDocument } from '../services/sales/printDocument.js'
 import { formatBrazilianPhone, formatBrazilianTaxId } from '../utils/inputMasks.js'
 import { savePreferences } from '../services/settings/settings.js'
 import { calculateSalesGoalTotals } from '../services/sales/salesGoals.js'
 
-const channelLabels = { whatsapp: 'WhatsApp', instagram: 'Instagram', mercadolivre: 'Mercado Livre (manual)', presencial: 'Presencial', outro: 'Outro' }
+const channelLabels = { whatsapp: 'WhatsApp', instagram: 'Instagram', mercadolivre: 'Mercado Livre (manual)', presencial: 'Presencial', website: 'Site institucional', outro: 'Outro' }
 const paymentLabels = { pending: 'Pendente', partial: 'Parcial', paid: 'Recebido' }
 const paymentMethodLabels = { dinheiro: 'Dinheiro', transferencia: 'Transferência', outro: 'Outro' }
 const deliveryLabels = { pending: 'A combinar', preparing: 'Em preparação', ready: 'Pronto', shipped: 'Enviado', delivered: 'Entregue', pickup: 'Retirada' }
@@ -344,6 +344,7 @@ export default function ExternalSalesPage() {
   const [stateFilter, setStateFilter] = useState('active')
   const [toast, setToast] = useState('')
   const [cancelError, setCancelError] = useState('')
+  const [approvingSaleId, setApprovingSaleId] = useState('')
   const [documentError, setDocumentError] = useState('')
   const [salesGoal, setSalesGoal] = useState(String(preferences.monthlySalesGoal || 5000))
   const [weeklySalesGoal, setWeeklySalesGoal] = useState(String(preferences.weeklySalesGoal || ''))
@@ -374,7 +375,7 @@ export default function ExternalSalesPage() {
   }), [sales, search, channel, stateFilter, alertFilter, today, preferences.dueAlertDays])
   const filteredQuotes = useMemo(() => alertFilter === 'expired-quotes' ? quotes.filter((quote) => quote.status === 'open' && quote.validUntil && quote.validUntil < today) : quotes, [quotes, alertFilter, today])
 
-  const activeSales = sales.filter((sale) => sale.status !== 'cancelled')
+  const activeSales = sales.filter((sale) => sale.status !== 'cancelled' && sale.orderApprovalStatus !== 'pending')
   const grossTotal = activeSales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
   const outstandingTotal = activeSales.reduce((sum, sale) => sum + (Number(sale.outstandingAmount) || 0), 0)
   const { monthKey, weekStart, weekEnd, yearKey, weeklySalesTotal, monthlySalesTotal, annualSalesTotal } = calculateSalesGoalTotals(sales)
@@ -461,6 +462,23 @@ export default function ExternalSalesPage() {
       notify('Venda cancelada. O histórico foi preservado.')
     } catch (cause) {
       setCancelError(firestoreErrorMessage(cause))
+    }
+  }
+
+  async function approveSale(sale) {
+    setCancelError('')
+    setApprovingSaleId(sale.id)
+    try {
+      await approveWebsiteOrder(workspaceUid, sale.id)
+      notify(`Solicitação #${sale.id.slice(0, 7).toUpperCase()} confirmada. O estoque físico foi atualizado.`)
+    } catch (cause) {
+      const scheduledRequest = sale.scheduledPurchase || sale.items?.some((item) => item.scheduledPurchase)
+      const message = firestoreErrorMessage(cause)
+      setCancelError(scheduledRequest && message.toLocaleLowerCase('pt-BR').includes('estoque insuficiente')
+        ? `O agendamento continua pendente. Reponha o estoque dos itens solicitados antes de confirmar: ${message}`
+        : message)
+    } finally {
+      setApprovingSaleId('')
     }
   }
 
@@ -555,11 +573,11 @@ export default function ExternalSalesPage() {
             {filteredSales.map((sale) => { const overdue = sale.status !== 'cancelled' && needsProductionOrDelivery(sale) && sale.dueDate && sale.dueDate < today; const daysLate = overdue ? Math.floor((new Date(`${today}T00:00:00`) - new Date(`${sale.dueDate}T00:00:00`)) / 86400000) : 0; return <tr key={sale.id} className={`${sale.status === 'cancelled' ? 'cancelled-row ' : ''}${overdue ? 'sale-overdue-row' : ''}`}>
               <td><strong className="sale-code">#{sale.id.slice(0, 7).toUpperCase()}</strong><small>{(sale.items ?? []).length} {(sale.items ?? []).length === 1 ? 'item' : 'itens'}</small></td>
               <td><strong className="table-primary-text">{sale.client?.name || 'Cliente'}</strong><small>{sale.client?.phone || sale.client?.email || 'Sem contato'}</small></td>
-              <td>{channelLabels[sale.channel] || 'Outro'}</td><td>{dateLabel(sale.soldAt)}</td>
+              <td>{channelLabels[sale.channel] || 'Outro'}{sale.orderApprovalStatus === 'pending' && <small><span className="status-pill payment-pending">{sale.scheduledPurchase || sale.items?.some((item) => item.scheduledPurchase) ? 'Agendamento pendente' : 'Solicitação pendente'}</span></small>}{sale.orderApprovalStatus === 'pending' && sale.scheduledPurchase && <small>Confirme após a reposição do estoque.</small>}</td><td>{dateLabel(sale.soldAt)}</td>
               <td><span className={`status-pill payment-${sale.paymentStatus || 'pending'}`}>{sale.status === 'cancelled' ? 'Cancelada' : paymentLabels[sale.paymentStatus] || 'Pendente'}</span></td>
               <td><span className={`status-pill delivery-${sale.deliveryStatus || 'pending'}`}>{deliveryLabels[sale.deliveryStatus] || 'A combinar'}</span>{overdue && <small className="deadline-overdue">Atrasada há {daysLate} dia(s) · prazo {dateLabel(sale.dueDate)}</small>}</td>
               <td><strong className="table-primary-text">{money(sale.total)}</strong><small>{sale.outstandingAmount > 0 ? `${money(sale.outstandingAmount)} a receber` : 'Sem saldo pendente'}</small></td>
-              <td><div className="sale-actions"><button aria-label={`Editar venda ${sale.id.slice(0, 7)}`} title="Editar venda" disabled={sale.status === 'cancelled'} onClick={() => { setFormMode('sale'); setFormQuote(null); setFormSale(sale); setFormOpen(true) }}>Editar</button>{sale.status !== 'cancelled' && <button title="Imprimir comprovante de venda" onClick={() => openDocument(sale, 'sale')}>Comprovante</button>}{sale.status !== 'cancelled' && <button className="cancel-action" title="Cancelar venda e manter o comprovante no histórico" onClick={() => cancelSale(sale)}>Cancelar</button>}<button className="cancel-action" title="Excluir venda e comprovante permanentemente" onClick={() => removeSale(sale)}>Excluir</button></div></td>
+              <td><div className="sale-actions">{sale.orderApprovalStatus === 'pending' && <button disabled={approvingSaleId === sale.id} title={sale.scheduledPurchase ? 'Confirme após repor o estoque dos itens agendados' : 'Confirmar solicitação do cliente'} onClick={() => approveSale(sale)}>{approvingSaleId === sale.id ? 'Confirmando…' : sale.scheduledPurchase ? 'Confirmar após reposição' : 'Confirmar pedido'}</button>}<button aria-label={`Editar venda ${sale.id.slice(0, 7)}`} title={sale.orderApprovalStatus === 'pending' ? 'Confirme a solicitação antes de editar' : 'Editar venda'} disabled={sale.status === 'cancelled' || sale.orderApprovalStatus === 'pending'} onClick={() => { setFormMode('sale'); setFormQuote(null); setFormSale(sale); setFormOpen(true) }}>Editar</button>{sale.status !== 'cancelled' && <button title="Imprimir comprovante de venda" onClick={() => openDocument(sale, 'sale')}>Comprovante</button>}{sale.status !== 'cancelled' && <button className="cancel-action" title="Cancelar venda e manter o comprovante no histórico" onClick={() => cancelSale(sale)}>Cancelar</button>}<button className="cancel-action" title="Excluir venda e comprovante permanentemente" onClick={() => removeSale(sale)}>Excluir</button></div></td>
             </tr>})}
           </tbody></table></div>
         )}

@@ -10,6 +10,7 @@ import useQuotes from '../hooks/useQuotes.js'
 import useFinancialMaterials from '../hooks/useFinancialMaterials.js'
 import useFinancialTransactions from '../hooks/useFinancialTransactions.js'
 import usePurchases from '../hooks/usePurchases.js'
+import { isProductionComplete } from '../utils/saleStatus.js'
 
 function DailySystemAlerts({ preferences }) {
   const { user } = useAuth()
@@ -25,7 +26,7 @@ function DailySystemAlerts({ preferences }) {
   const today = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
   const horizon = new Date(current.getFullYear(), current.getMonth(), current.getDate() + Number(preferences.dueAlertDays || 3))
   const until = `${horizon.getFullYear()}-${String(horizon.getMonth() + 1).padStart(2, '0')}-${String(horizon.getDate()).padStart(2, '0')}`
-  const dueOrders = preferences.dailyDueAlertsEnabled ? sales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && sale.productionStatus !== 'ready' && sale.dueDate) : []
+  const dueOrders = preferences.dailyDueAlertsEnabled ? sales.filter((sale) => sale.status !== 'cancelled' && sale.deliveryStatus !== 'delivered' && !isProductionComplete(sale) && sale.dueDate) : []
   const overdueSales = dueOrders.filter((sale) => sale.dueDate < today)
   const dueSoonSales = dueOrders.filter((sale) => sale.dueDate >= today && sale.dueDate <= until)
   const expiredQuotes = preferences.dailyDueAlertsEnabled ? quotes.filter((quote) => quote.status === 'open' && quote.validUntil && quote.validUntil < today) : []
@@ -33,10 +34,10 @@ function DailySystemAlerts({ preferences }) {
   const lowStockMaterials = preferences.lowStockAlertsEnabled ? materials.filter((material) => material.active !== false && Number(material.stockQuantity) <= Number(material.minStock)) : []
   const lowStockCount = lowStockProducts.length + lowStockMaterials.length
   const routes = {
-    overdue: '/producao?alert=overdue',
-    dueSoon: '/producao?alert=due-soon',
-    quotes: '/vendas?tab=quotes&alert=expired-quotes',
-    stock: '/estoque?alert=low-stock',
+    overdue: '/admin/producao?alert=overdue',
+    dueSoon: '/admin/producao?alert=due-soon',
+    quotes: '/admin/vendas?tab=quotes&alert=expired-quotes',
+    stock: '/admin/estoque?alert=low-stock',
   }
 
   useEffect(() => {
@@ -68,16 +69,17 @@ function DailySystemAlerts({ preferences }) {
 }
 
 const navigation = [
-  { label: 'Dashboard', path: '/', glyph: '▦' },
-  { label: 'Vendas externas', path: '/vendas', glyph: '↗' },
-  { label: 'Clientes', path: '/clientes', glyph: '♧' },
-  { label: 'Financeiro', path: '/financeiro', glyph: '◉' },
-  { label: 'Produtos', path: '/produtos', glyph: '◇' },
-  { label: 'Produção', path: '/producao', glyph: '⚙' },
-  { label: 'Estoque', path: '/estoque', glyph: '▥' },
-  { label: 'Relatórios', path: '/relatorios', glyph: '▧' },
-  { label: 'Agenda e tarefas', path: '/agenda', glyph: '◷' },
-  { label: 'Configurações', path: '/configuracoes', glyph: '⚙' },
+  { label: 'Dashboard', path: '/admin', glyph: '▦' },
+  { label: 'Vendas externas', path: '/admin/vendas', glyph: '↗' },
+  { label: 'Clientes', path: '/admin/clientes', glyph: '♧' },
+  { label: 'Financeiro', path: '/admin/financeiro', glyph: '◉' },
+  { label: 'Produtos', path: '/admin/produtos', glyph: '◇' },
+  { label: 'Produção', path: '/admin/producao', glyph: '⚙' },
+  { label: 'Estoque', path: '/admin/estoque', glyph: '▥' },
+  { label: 'Site institucional', path: '/admin/site', glyph: '✳' },
+  { label: 'Relatórios', path: '/admin/relatorios', glyph: '▧' },
+  { label: 'Agenda e tarefas', path: '/admin/agenda', glyph: '◷' },
+  { label: 'Configurações', path: '/admin/configuracoes', glyph: '⚙' },
 ]
 
 function normalizeSearch(value) {
@@ -129,21 +131,21 @@ function GlobalNavigationSearch({ onNavigate, accountName }) {
       ...sales.map((sale) => {
         const itemNames = (sale.items || []).map((item) => item.description).filter(Boolean).join(', ')
         const label = `${sale.client?.name || 'Cliente'} · Pedido #${sale.id.slice(0, 7).toUpperCase()}`
-        return { key: `sale-${sale.id}`, label, detail: `Pedido/venda · ${itemNames || 'sem itens'} · ${sale.soldAt || ''}`, path: '/vendas', glyph: '▤', kind: 'record', searchable: `${label} ${sale.id} ${sale.client?.phone || ''} ${sale.client?.email || ''} ${itemNames} ${sale.channel || ''}` }
+        return { key: `sale-${sale.id}`, label, detail: `Pedido/venda · ${itemNames || 'sem itens'} · ${sale.soldAt || ''}`, path: '/admin/vendas', glyph: '▤', kind: 'record', searchable: `${label} ${sale.id} ${sale.client?.phone || ''} ${sale.client?.email || ''} ${itemNames} ${sale.channel || ''}` }
       }),
       ...quotes.map((quote) => {
         const itemNames = (quote.items || []).map((item) => item.description).filter(Boolean).join(', ')
         const label = `${quote.client?.name || 'Cliente'} · ${quote.quoteNumber || `ORC-${quote.id.slice(0, 8).toUpperCase()}`}`
-        return { key: `quote-${quote.id}`, label, detail: `Orçamento · ${itemNames || 'sem itens'} · ${quote.quoteDate || ''}`, path: '/vendas', glyph: '▤', kind: 'record', searchable: `${label} ${quote.id} ${quote.client?.phone || ''} ${itemNames}` }
+        return { key: `quote-${quote.id}`, label, detail: `Orçamento · ${itemNames || 'sem itens'} · ${quote.quoteDate || ''}`, path: '/admin/vendas', glyph: '▤', kind: 'record', searchable: `${label} ${quote.id} ${quote.client?.phone || ''} ${itemNames}` }
       }),
-      ...products.map((product) => ({ key: `product-${product.id}`, label: product.name, detail: `Produto · ${product.sku || 'sem SKU'} · ${product.category || 'sem categoria'}`, path: '/produtos', glyph: '◇', kind: 'record', searchable: `${product.name} ${product.sku || ''} ${product.category || ''} ${product.description || ''}` })),
-      ...clients.map((client) => ({ key: `client-${client.id}`, label: client.name, detail: `Cliente · ${client.phone || client.email || client.taxId || 'cadastro'}`, path: '/clientes', glyph: '♧', kind: 'record', searchable: `${client.name} ${client.phone || ''} ${client.email || ''} ${client.taxId || ''} ${client.city || ''}` })),
-      ...materials.map((material) => ({ key: `material-${material.id}`, label: material.name, detail: `Material/insumo · estoque ${material.quantity ?? 0}`, path: '/financeiro', glyph: '▥', kind: 'record', searchable: `${material.name} ${material.category || ''} ${material.unit || ''}` })),
-      ...transactions.map((transaction) => ({ key: `transaction-${transaction.id}`, label: transaction.description || 'Lançamento financeiro', detail: `${transaction.type === 'income' ? 'Receita' : 'Despesa'} · ${transaction.category || 'sem categoria'} · ${transaction.date || ''}`, path: '/financeiro', glyph: '◉', kind: 'record', searchable: `${transaction.description || ''} ${transaction.category || ''} ${transaction.notes || ''} ${transaction.sourcePurchaseId || ''}` })),
-      ...purchases.map((purchase) => ({ key: `purchase-${purchase.id}`, label: purchase.productName || 'Compra', detail: `Histórico de compra · ${purchase.supplier || 'fornecedor não informado'} · ${purchase.date || ''}`, path: '/financeiro', glyph: '＋', kind: 'record', searchable: `${purchase.productName || ''} ${purchase.supplier || ''} ${purchase.notes || ''} ${purchase.id}` })),
+      ...products.map((product) => ({ key: `product-${product.id}`, label: product.name, detail: `Produto · ${product.sku || 'sem SKU'} · ${product.category || 'sem categoria'}`, path: '/admin/produtos', glyph: '◇', kind: 'record', searchable: `${product.name} ${product.sku || ''} ${product.category || ''} ${product.description || ''}` })),
+      ...clients.map((client) => ({ key: `client-${client.id}`, label: client.name, detail: `Cliente · ${client.phone || client.email || client.taxId || 'cadastro'}`, path: '/admin/clientes', glyph: '♧', kind: 'record', searchable: `${client.name} ${client.phone || ''} ${client.email || ''} ${client.taxId || ''} ${client.city || ''}` })),
+      ...materials.map((material) => ({ key: `material-${material.id}`, label: material.name, detail: `Material/insumo · estoque ${material.quantity ?? 0}`, path: '/admin/financeiro', glyph: '▥', kind: 'record', searchable: `${material.name} ${material.category || ''} ${material.unit || ''}` })),
+      ...transactions.map((transaction) => ({ key: `transaction-${transaction.id}`, label: transaction.description || 'Lançamento financeiro', detail: `${transaction.type === 'income' ? 'Receita' : 'Despesa'} · ${transaction.category || 'sem categoria'} · ${transaction.date || ''}`, path: '/admin/financeiro', glyph: '◉', kind: 'record', searchable: `${transaction.description || ''} ${transaction.category || ''} ${transaction.notes || ''} ${transaction.sourcePurchaseId || ''}` })),
+      ...purchases.map((purchase) => ({ key: `purchase-${purchase.id}`, label: purchase.productName || 'Compra', detail: `Histórico de compra · ${purchase.supplier || 'fornecedor não informado'} · ${purchase.date || ''}`, path: '/admin/financeiro', glyph: '＋', kind: 'record', searchable: `${purchase.productName || ''} ${purchase.supplier || ''} ${purchase.notes || ''} ${purchase.id}` })),
     ]
     if ([accountName, user?.displayName, user?.email].filter(Boolean).some((value) => normalizeSearch(value).includes(term))) {
-      records.push({ key: 'current-user', label: accountName || user?.displayName || 'Usuário da conta', detail: `Usuário da conta · ${user?.email || ''}`, path: '/configuracoes', glyph: '●', kind: 'record', searchable: `${accountName || ''} ${user?.displayName || ''} ${user?.email || ''}` })
+      records.push({ key: 'current-user', label: accountName || user?.displayName || 'Usuário da conta', detail: `Usuário da conta · ${user?.email || ''}`, path: '/admin/configuracoes', glyph: '●', kind: 'record', searchable: `${accountName || ''} ${user?.displayName || ''} ${user?.email || ''}` })
     }
     const matchingRecords = records.filter((record) => normalizeSearch(record.searchable).includes(term))
       .sort((left, right) => Number(!normalizeSearch(left.label).startsWith(term)) - Number(!normalizeSearch(right.label).startsWith(term)))
@@ -249,7 +251,7 @@ export default function AdminLayout() {
       <Brand />
       <div className="sidebar-label">ESPAÇO DE TRABALHO</div>
       <nav className="side-nav" aria-label="Navegação principal">
-        {navigation.map((item) => <NavLink key={item.path} to={item.path} end={item.path === '/'} className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`} onClick={() => setMenuOpen(false)}>
+        {navigation.map((item) => <NavLink key={item.path} to={item.path} end={item.path === '/admin'} className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`} onClick={() => setMenuOpen(false)}>
           <span className="nav-glyph" aria-hidden="true">{item.glyph}</span>{item.label}{item.path === '/pedidos' && <span className="nav-shortcut">›</span>}
         </NavLink>)}
       </nav>
@@ -269,7 +271,7 @@ export default function AdminLayout() {
         <button className="mobile-menu-button" onClick={() => setMenuOpen(true)} aria-label="Abrir menu">☰</button>
         <div className="topbar-heading"><span>{preferences.businessName || 'Print Caju'} Admin</span><h1>{current}</h1></div>
         <GlobalNavigationSearch accountName={displayName} onNavigate={() => setMenuOpen(false)} />
-        <div className="topbar-actions"><span className="private-chip"><span />Área privada</span><Link className="icon-button settings-shortcut" aria-label="Configurações" to="/configuracoes">⚙</Link><button className="button button-quiet signout-button" onClick={signOut}>Sair</button></div>
+        <div className="topbar-actions"><span className="private-chip"><span />Área privada</span><Link className="icon-button settings-shortcut" aria-label="Configurações" to="/admin/configuracoes">⚙</Link><button className="button button-quiet signout-button" onClick={signOut}>Sair</button></div>
       </header>
       <main className="page-content"><DailySystemAlerts preferences={preferences} /><Outlet /></main>
       <footer className="app-footer">{preferences.businessName || 'Print Caju'} Admin <span>•</span> Ambiente privado</footer>

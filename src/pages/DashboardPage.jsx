@@ -44,7 +44,7 @@ function SalesGoals({ sales, loading, error, preferences }) {
     { label: 'Este ano', range: yearKey, value: annualSalesTotal, target: Number(preferences.annualSalesGoal) || 0 },
   ]
   return <section className="panel dashboard-sales-goals" aria-labelledby="dashboard-goals-heading">
-    <div className="panel-heading"><div><h2 id="dashboard-goals-heading">Metas de vendas</h2><p>Acompanhe as vendas acumuladas até hoje dentro de cada período.</p></div><Link className="text-link" to="/vendas">Gerenciar metas <span>→</span></Link></div>
+    <div className="panel-heading"><div><h2 id="dashboard-goals-heading">Metas de vendas</h2><p>Acompanhe as vendas acumuladas até hoje dentro de cada período.</p></div><Link className="text-link" to="/admin/vendas">Gerenciar metas <span>→</span></Link></div>
     <div className="dashboard-goals-grid">{periods.map((period) => { const progress = period.target > 0 ? Math.min(100, period.value / period.target * 100) : 0; return <article className="dashboard-goal-card" key={period.label}>
       <div><span>{period.label}</span><small>{period.range}</small></div><strong>{loading ? '…' : error ? '—' : money(period.value)}</strong><small>{period.target > 0 ? `Meta ${money(period.target)}` : 'Meta não definida'}</small><div className="sales-goal-track" role="progressbar" aria-label={`Progresso da meta ${period.label.toLocaleLowerCase('pt-BR')}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div><small>{period.target > 0 ? `${Math.floor(progress)}% alcançado` : 'Defina a meta em Vendas'}</small>
     </article> })}</div>
@@ -139,7 +139,7 @@ export default function DashboardPage() {
     </section>
 
     <section aria-labelledby="finance-heading">
-      <div className="section-heading dashboard-period-heading"><div><h2 id="finance-heading">Resumo das vendas externas</h2><p>Visão consolidada dos registros persistidos no Firestore</p></div><div className="dashboard-period-controls"><label>Período<select value={period === 'all' ? 'all' : 'month'} onChange={(event) => setPeriod(event.target.value === 'all' ? 'all' : today.slice(0, 7))}><option value="all">Todo o período</option><option value="month">Selecionar mês</option></select></label>{period !== 'all' && <label>Mês<input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} /></label>}<Link className="period-chip dashboard-period-link" to="/vendas">Ver vendas ↗</Link></div></div>
+      <div className="section-heading dashboard-period-heading"><div><h2 id="finance-heading">Resumo das vendas externas</h2><p>Visão consolidada dos registros persistidos no Firestore</p></div><div className="dashboard-period-controls"><label>Período<select value={period === 'all' ? 'all' : 'month'} onChange={(event) => setPeriod(event.target.value === 'all' ? 'all' : today.slice(0, 7))}><option value="all">Todo o período</option><option value="month">Selecionar mês</option></select></label>{period !== 'all' && <label>Mês<input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} /></label>}<Link className="period-chip dashboard-period-link" to="/admin/vendas">Ver vendas ↗</Link></div></div>
       <FinanceCards sales={sales} loading={salesLoading} error={salesError} />
     </section>
 
@@ -149,10 +149,10 @@ export default function DashboardPage() {
     <section aria-labelledby="operation-heading">
       <div className="section-heading"><div><h2 id="operation-heading">Visão da operação</h2><p>O que precisa de atenção hoje</p></div><span className="period-chip">Atualizado em tempo real</span></div>
       <div className="dashboard-operation-grid">
-        <Link to="/vendas" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-blue">▤</span><span><small>Vendas externas</small><strong>{salesLoading ? '…' : activeSales.length}</strong><em>{lateOrders.length ? `${lateOrders.length} atrasado(s)` : 'Nenhum atraso'}</em></span></Link>
-        <Link to="/estoque" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-orange">▦</span><span><small>Estoque baixo</small><strong>{productsLoading ? '…' : lowStock.length}</strong><em>{lowStock.length ? 'Produto(s) precisam de reposição' : 'Tudo dentro do mínimo'}</em></span></Link>
-        <Link to="/agenda" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-purple">◷</span><span><small>Tarefas em aberto</small><strong>{agendaLoading ? '…' : unfinishedAgenda.length}</strong><em>{agendaItems.filter((item) => itemStatus(item) === 'in_progress').length} em andamento</em></span></Link>
-        <Link to="/financeiro" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-green">R$</span><span><small>Saldo livre do período</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.freeCash)}</strong><em>{monthLabel}</em></span></Link>
+        <Link to="/admin/vendas" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-blue">▤</span><span><small>Vendas externas</small><strong>{salesLoading ? '…' : activeSales.length}</strong><em>{lateOrders.length ? `${lateOrders.length} atrasado(s)` : 'Nenhum atraso'}</em></span></Link>
+        <Link to="/admin/estoque" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-orange">▦</span><span><small>Estoque baixo</small><strong>{productsLoading ? '…' : lowStock.length}</strong><em>{lowStock.length ? 'Produto(s) precisam de reposição' : 'Tudo dentro do mínimo'}</em></span></Link>
+        <Link to="/admin/agenda" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-purple">◷</span><span><small>Tarefas em aberto</small><strong>{agendaLoading ? '…' : unfinishedAgenda.length}</strong><em>{agendaItems.filter((item) => itemStatus(item) === 'in_progress').length} em andamento</em></span></Link>
+        <Link to="/admin/financeiro" className="dashboard-operation-card"><span className="dashboard-operation-icon dashboard-tone-green">R$</span><span><small>Saldo livre do período</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.freeCash)}</strong><em>{monthLabel}</em></span></Link>
       </div>
     </section>
 
@@ -161,6 +161,8 @@ export default function DashboardPage() {
       <div className="dashboard-cash-metrics">
         <div><small>Destinado à reposição</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.replenishment)}</strong><em>Despesas e taxas registradas</em></div>
         <div><small>Lucro operacional de caixa</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.operatingResult)}</strong><em>Entradas menos despesas e taxas; sem aportes</em></div>
+        <div><small>Caixa da empresa</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.businessCash)}</strong><em>Após compras pagas com o caixa da empresa</em></div>
+        <div><small>Saldo de investimentos</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.investmentBalance)}</strong><em>Aportes menos compras pagas com investimento</em></div>
         <div><small>Disponível para gastar</small><strong>{financeLoading || salesLoading ? '…' : financeError || salesError ? '—' : money(financialControl.freeCash)}</strong><em>{financeError || salesError ? 'Falha ao carregar os dados financeiros' : financialControl.freeCash < 0 ? 'Caixa abaixo das saídas registradas' : 'Caixa após separar a reposição; inclui aportes'}</em></div>
       </div>
       <p className="dashboard-cash-note">Estimativa baseada nos registros de {monthLabel.toLocaleLowerCase('pt-BR')}; não representa o saldo bancário e não inclui saldo inicial não lançado. Sem histórico das parcelas, recebimentos são atribuídos ao mês da venda.</p>

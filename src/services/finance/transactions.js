@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore'
+import { addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore'
 import { db } from '../firebase/config.js'
 
 const transactionsCollection = (uid) => collection(db, 'users', uid, 'financialTransactions')
@@ -24,6 +24,33 @@ export function updateFinancialTransaction(uid, transactionId, transaction) {
     ...transaction,
     updatedAt: serverTimestamp(),
   })
+}
+
+export async function reclassifyMaterialExpensesAsInvestments(uid) {
+  if (!uid) throw new Error('Não foi possível identificar a conta do Financeiro.')
+  const snapshot = await getDocs(transactionsCollection(uid))
+  const entries = snapshot.docs.filter((item) => {
+    const data = item.data()
+    return data.type === 'expense'
+      && ['materials', 'packaging'].includes(data.category)
+      && data.status !== 'cancelled'
+  })
+
+  for (let start = 0; start < entries.length; start += 450) {
+    const batch = writeBatch(db)
+    entries.slice(start, start + 450).forEach((item) => {
+      batch.update(item.ref, {
+        category: 'investment',
+        paymentStatus: 'paid',
+        fundingSource: 'business_cash',
+        investmentMaterialPurchase: true,
+        updatedAt: serverTimestamp(),
+      })
+    })
+    await batch.commit()
+  }
+
+  return entries.length
 }
 
 export function voidFinancialTransaction(uid, transactionId) {

@@ -1,5 +1,6 @@
 import { collection, deleteDoc, doc, onSnapshot, orderBy, query, runTransaction, serverTimestamp } from 'firebase/firestore'
 import { db } from '../firebase/config.js'
+import { publicSiteProductData } from '../site.js'
 
 const purchasesCollection = (uid) => collection(db, 'users', uid, 'purchases')
 
@@ -19,6 +20,7 @@ export function createPurchase(uid, purchase) {
     const before = Number(product.data().quantity) || 0
     const after = before + purchase.quantity
     transaction.update(productRef, { quantity: after, updatedAt: serverTimestamp() })
+    if (product.data().active !== false) transaction.set(doc(db, 'publicSiteProducts', purchase.productId), publicSiteProductData({ ...product.data(), quantity: after }))
     transaction.set(movementRef, { productId: purchase.productId, productName: product.data().name, delta: purchase.quantity, before, after, reason: `Compra${purchase.supplier ? ` · ${purchase.supplier}` : ''}`, purchaseId: purchaseRef.id, createdAt: serverTimestamp() })
     transaction.set(purchaseRef, { ...purchase, productName: product.data().name, status: 'active', createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
     return purchaseRef.id
@@ -65,6 +67,7 @@ export function deleteLegacyPurchaseFromHistory(uid, transactionId) {
       throw new Error('O estoque atual já foi consumido ou ajustado. Não é seguro excluir esta compra.')
     }
     transaction.update(productRef, { quantity: nextQuantity, updatedAt: serverTimestamp() })
+    if (productSnapshot.data().active !== false) transaction.set(doc(db, 'publicSiteProducts', purchase.productId), publicSiteProductData({ ...productSnapshot.data(), quantity: nextQuantity }))
     transaction.delete(purchaseRef)
     transaction.delete(expenseRef)
   })

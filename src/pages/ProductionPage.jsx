@@ -6,11 +6,10 @@ import useProducts from '../hooks/useProducts.js'
 import usePreferences from '../hooks/usePreferences.js'
 import { calculatePrintingEnergyCost } from '../services/finance/costing.js'
 import { updateExternalSale } from '../services/sales/externalSales.js'
+import { isProductionComplete, normalizedProductionStatus } from '../utils/saleStatus.js'
 
 const statusLabel = { not_started: 'A iniciar', preparing: 'Em preparo', producing: 'Em produção', ready: 'Concluída' }
-const productionStatus = (sale) => ['not_started', 'preparing', 'producing', 'ready'].includes(sale.productionStatus)
-  ? sale.productionStatus
-  : sale.deliveryStatus === 'preparing' ? 'preparing' : 'not_started'
+const productionStatus = normalizedProductionStatus
 const dateLabel = (value) => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`)) : 'Prazo não definido'
 
 export default function ProductionPage() {
@@ -28,7 +27,7 @@ export default function ProductionPage() {
   const horizon = new Date(now.getFullYear(), now.getMonth(), now.getDate() + Number(preferences.dueAlertDays || 3))
   const until = `${horizon.getFullYear()}-${String(horizon.getMonth() + 1).padStart(2, '0')}-${String(horizon.getDate()).padStart(2, '0')}`
   const queue = sales.filter((sale) => sale.status !== 'cancelled')
-  const pendingDelivery = queue.filter((sale) => sale.deliveryStatus !== 'delivered' && productionStatus(sale) !== 'ready')
+  const pendingDelivery = queue.filter((sale) => sale.deliveryStatus !== 'delivered' && !isProductionComplete(sale))
   const overdue = pendingDelivery.filter((sale) => sale.dueDate && sale.dueDate < today)
   const dueSoon = pendingDelivery.filter((sale) => sale.dueDate && sale.dueDate >= today && sale.dueDate <= until)
   const orderedQueue = [...queue].sort((a, b) => (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31'))
@@ -50,7 +49,7 @@ export default function ProductionPage() {
   return <div className="page-stack">
     <div className="page-intro"><div><p className="eyebrow">OPERAÇÃO</p><h2>Produção</h2><p>Acompanhe a produção e veja quanto falta para o prazo de entrega de cada pedido.</p></div><span className="count-chip">{queue.length} vendas</span></div>
     <div className="production-deadline-summary"><article><span>Entrega em até {preferences.dueAlertDays} dias</span><strong>{dueSoon.length}</strong><small>Pedidos ativos próximos do prazo</small></article><article className={overdue.length ? 'production-deadline-summary-overdue' : ''}><span>Entregas atrasadas</span><strong>{overdue.length}</strong><small>Prazo vencido e ainda não entregue</small></article><article><span>Produção concluída</span><strong>{queue.filter((sale) => productionStatus(sale) === 'ready').length}</strong><small>Pronta para entrega</small></article></div>
-    {alertFilter && <div className="production-deadline-banner" role="status"><strong>{alertFilter === 'overdue' ? 'Entregas atrasadas' : 'Entregas próximas'}</strong><span>{alertFilter === 'overdue' ? `${visibleQueue.length} pedido(s) passaram do prazo e ainda não foram entregues.` : `${visibleQueue.length} pedido(s) têm entrega prevista para os próximos ${preferences.dueAlertDays} dias.`}</span><Link to="/producao">Ver toda a produção</Link></div>}
+    {alertFilter && <div className="production-deadline-banner" role="status"><strong>{alertFilter === 'overdue' ? 'Entregas atrasadas' : 'Entregas próximas'}</strong><span>{alertFilter === 'overdue' ? `${visibleQueue.length} pedido(s) passaram do prazo e ainda não foram entregues.` : `${visibleQueue.length} pedido(s) têm entrega prevista para os próximos ${preferences.dueAlertDays} dias.`}</span><Link to="/admin/producao">Ver toda a produção</Link></div>}
     {(error || productsError || actionError) && <div className="sales-error" role="alert">{actionError || error || productsError}</div>}{message && <div className="info-banner" role="status"><span>i</span><p>{message}</p></div>}
     {loading || productsLoading ? <div className="panel sales-loading">Carregando vendas…</div> : visibleQueue.length === 0 ? <section className="panel planned-panel"><span className="planned-icon">⚙</span><h3>{alertFilter ? 'Nenhum pedido nesta faixa de prazo' : 'Nenhuma venda registrada'}</h3><p>As vendas registradas aparecerão aqui para acompanhamento da produção.</p></section> : <div className="production-grid">{visibleQueue.map((sale) => {
       const currentStatus = productionStatus(sale)

@@ -8,7 +8,7 @@ import useProducts from '../hooks/useProducts.js'
 import { createMaterialPurchase, deleteMaterialPurchaseFromHistory, importHistoricalMaterialPurchase, loadMaterialPurchaseForTransaction, updateMaterialPurchaseFromHistory } from '../services/finance/materials.js'
 import { calculateFinancialControl } from '../services/finance/control.js'
 import { calculatePurchaseBaseQuantity, formatUnit, purchaseUnits } from '../services/finance/units.js'
-import { createFinancialTransaction, deleteFinancialTransaction, updateFinancialTransaction, voidFinancialTransaction } from '../services/finance/transactions.js'
+import { createFinancialTransaction, deleteFinancialTransaction, reclassifyMaterialExpensesAsInvestments, updateFinancialTransaction, voidFinancialTransaction } from '../services/finance/transactions.js'
 import { deleteLegacyPurchaseFromHistory } from '../services/inventory/purchases.js'
 
 const categories = {
@@ -31,6 +31,7 @@ const categories = {
 }
 const categoryLabel = (entry) => categories[entry.type]?.find(([value]) => value === entry.category)?.[1] || 'Outro'
 const paymentLabels = { pix: 'Pix', cash: 'Dinheiro', transfer: 'Transferência', debit: 'Cartão de débito', credit: 'Cartão de crédito', other: 'Outro' }
+const fundingSourceLabel = (source) => source === 'investment_funds' ? 'Investimentos' : source === 'business_cash' ? 'Caixa da empresa' : 'Não informado'
 
 function localDate() {
   const today = new Date()
@@ -64,10 +65,10 @@ function monthLabel(value) {
   return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1))
 }
 function emptyForm() {
-  return { type: 'expense', date: localDate(), description: '', category: 'materials', amount: '', paymentMethod: 'pix', paymentStatus: 'paid', notes: '' }
+  return { type: 'expense', date: localDate(), description: '', category: 'materials', amount: '', paymentMethod: 'pix', paymentStatus: 'paid', fundingSource: 'business_cash', notes: '' }
 }
 function emptyMaterialForm() {
-  return { materialId: '', name: '', date: localDate(), packageQuantity: '1', packageUnit: 'kg', packageWidth: '', packageLength: '', dimensionUnit: 'cm', packageCost: '', minStock: '0', paymentMethod: 'pix' }
+  return { materialId: '', name: '', date: localDate(), packageQuantity: '1', packageUnit: 'kg', packageWidth: '', packageLength: '', dimensionUnit: 'cm', packageCost: '', minStock: '0', paymentMethod: 'pix', financialCategory: 'investment', paymentStatus: 'paid', fundingSource: 'business_cash' }
 }
 function errorMessage(cause) {
   if (cause.code === 'permission-denied') return 'O Firestore bloqueou o lançamento. Confira se as regras permitem gravar em users/{uid}/financialTransactions.'
@@ -282,6 +283,7 @@ export default function FinancePage() {
   const [editingId, setEditingId] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingMaterial, setSavingMaterial] = useState(false)
+  const [reclassifyingMaterials, setReclassifyingMaterials] = useState(false)
   const [busyId, setBusyId] = useState('')
   const [importingHistoryId, setImportingHistoryId] = useState('')
   const [editingHistoryId, setEditingHistoryId] = useState('')
@@ -296,10 +298,12 @@ export default function FinancePage() {
     const saleFees = monthSales.reduce((total, sale) => total + amount(sale.fees), 0)
     const otherIncome = activeTransactions.filter((entry) => entry.type === 'income').reduce((total, entry) => total + amount(entry.amount), 0)
     const expenseEntries = activeTransactions.filter((entry) => entry.type === 'expense')
-    const manualExpenses = expenseEntries.filter((entry) => entry.paymentStatus !== 'pending').reduce((total, entry) => total + amount(entry.amount), 0)
+    const paidExpenses = expenseEntries.filter((entry) => entry.paymentStatus !== 'pending')
+    const manualExpenses = paidExpenses.filter((entry) => entry.category !== 'investment').reduce((total, entry) => total + amount(entry.amount), 0)
+    const investmentExpenses = paidExpenses.filter((entry) => entry.category === 'investment').reduce((total, entry) => total + amount(entry.amount), 0)
     const pendingExpenses = expenseEntries.filter((entry) => entry.paymentStatus === 'pending').reduce((total, entry) => total + amount(entry.amount), 0)
     const expenses = saleFees + manualExpenses
-    return { monthTransactions, salesReceived, saleFees, otherIncome, manualExpenses, pendingExpenses, expenses, balance: salesReceived + otherIncome - expenses }
+    return { monthTransactions, salesReceived, saleFees, otherIncome, manualExpenses, investmentExpenses, pendingExpenses, expenses, balance: salesReceived + otherIncome - expenses - investmentExpenses }
   }, [month, sales, transactions])
   const control = useMemo(
     () => calculateFinancialControl({ sales, transactions, products, month }),
@@ -313,7 +317,7 @@ export default function FinancePage() {
 
   function startEdit(entry) {
     setEditingId(entry.id)
-    setForm({ type: entry.type, date: entry.date, description: entry.description, category: entry.category, amount: String(entry.amount), paymentMethod: entry.paymentMethod || 'other', paymentStatus: entry.paymentStatus || 'paid', notes: entry.notes || '' })
+    setForm({ type: entry.type, date: entry.date, description: entry.description, category: entry.category, amount: String(entry.amount), paymentMethod: entry.paymentMethod || 'other', paymentStatus: entry.paymentStatus || 'paid', fundingSource: entry.fundingSource || 'business_cash', notes: entry.notes || '' })
     setMessage('')
     setError('')
   }
@@ -329,6 +333,43 @@ export default function FinancePage() {
       setError(errorMessage(cause))
     } finally {
       setBusyId('')
+    }
+  }
+
+  async function classifyMaterialPurchaseAsInvestment(entry) {
+    if (!window.confirm(`Classificar “${entry.description}” como investimento pago, saindo do caixa da empresa?`)) return
+    setBusyId(entry.id)
+    setMessage('')
+    setError('')
+    try {
+      await updateFinancialTransaction(workspaceUid, entry.id, {
+        category: 'investment',
+        paymentStatus: 'paid',
+        fundingSource: 'business_cash',
+        investmentMaterialPurchase: true,
+      })
+      setMessage(`“${entry.description}” agora está classificado como investimento pago, saindo do caixa da empresa.`)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function reclassifyExistingMaterialExpenses() {
+    if (!window.confirm('Reclassificar todos os lançamentos ativos de “Materiais e insumos” e “Embalagens” como investimentos pagos, saindo do caixa da empresa? Despesas de outras categorias não serão alteradas.')) return
+    setReclassifyingMaterials(true)
+    setMessage('')
+    setError('')
+    try {
+      const count = await reclassifyMaterialExpensesAsInvestments(workspaceUid)
+      setMessage(count
+        ? `${count} lançamento(s) de materiais/embalagens reclassificado(s) como investimento pago, saindo do caixa da empresa.`
+        : 'Não há despesas ativas de materiais/embalagens para reclassificar.')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setReclassifyingMaterials(false)
     }
   }
 
@@ -348,6 +389,7 @@ export default function FinancePage() {
       amount: Number(amount(form.amount).toFixed(2)),
       paymentMethod: form.paymentMethod,
       paymentStatus: form.type === 'expense' ? form.paymentStatus : 'paid',
+      ...(form.type === 'expense' ? { fundingSource: form.fundingSource } : {}),
       notes: form.notes.trim(),
     }
     setSaving(true)
@@ -372,6 +414,7 @@ export default function FinancePage() {
     if (!selectedMaterial && !materialForm.name.trim()) return setError('Informe o nome do material.')
     if (!selectedMaterial && materials.some((item) => item.name.trim().toLocaleLowerCase('pt-BR') === materialForm.name.trim().toLocaleLowerCase('pt-BR'))) return setError('Este material já existe. Selecione-o para registrar uma nova compra.')
     if (!materialForm.date) return setError('Informe a data da compra do material.')
+    if (!['business_cash', 'investment_funds'].includes(materialForm.fundingSource)) return setError('Selecione de qual saldo saiu o valor da compra.')
     if (!Number.isFinite(Number(materialForm.packageQuantity)) || amount(materialForm.packageQuantity) <= 0) return setError('A quantidade comprada precisa ser um número maior que zero.')
     if (!Number.isFinite(amount(materialForm.packageCost)) || amount(materialForm.packageCost) <= 0) return setError('Informe um valor total da compra maior que zero.')
     if (!selectedMaterial && (!Number.isFinite(Number(materialForm.minStock)) || Number(materialForm.minStock) < 0)) return setError('O estoque mínimo precisa ser um número igual ou maior que zero.')
@@ -405,7 +448,11 @@ export default function FinancePage() {
       setMaterialForm(emptyMaterialForm())
       setMaterialPhotoFile(null)
       setMaterialPhotoRemoved(false)
-      setMessage('Material cadastrado, estoque atualizado e compra lançada como despesa.')
+      setMessage(materialForm.paymentStatus === 'pending'
+        ? `Material cadastrado. Compra pendente. Origem do pagamento: ${fundingSourceLabel(materialForm.fundingSource)}.`
+        : materialForm.financialCategory === 'investment'
+          ? `Material cadastrado e investimento pago registrado. Origem: ${fundingSourceLabel(materialForm.fundingSource)}; não reduz o lucro operacional.`
+          : `Material cadastrado e despesa operacional paga. Origem: ${fundingSourceLabel(materialForm.fundingSource)}.`)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -475,7 +522,8 @@ export default function FinancePage() {
     <section className="finance-summary-grid" aria-label={`Resumo de ${monthLabel(month)}`}>
       <SummaryCard title="Recebido das vendas" value={loading ? '…' : loadError ? '—' : money(report.salesReceived)} detail="Pagamentos recebidos em vendas ativas" tone="income" />
       <SummaryCard title="Outras receitas" value={loading ? '…' : loadError ? '—' : money(report.otherIncome)} detail="Entradas manuais, incluindo aportes" tone="other" />
-      <SummaryCard title="Despesas e taxas" value={loading ? '…' : loadError ? '—' : money(report.expenses)} detail={`${money(report.manualExpenses)} despesas · ${money(report.saleFees)} taxas das vendas`} tone="expense" />
+      <SummaryCard title="Despesas e taxas" value={loading ? '…' : loadError ? '—' : money(report.expenses)} detail={`${money(report.manualExpenses)} despesas operacionais · ${money(report.saleFees)} taxas`} tone="expense" />
+      <SummaryCard title="Compras classificadas como investimento" value={loading ? '…' : loadError ? '—' : money(report.investmentExpenses)} detail="Saídas que não reduzem o lucro operacional" tone="other" />
       <SummaryCard title={month === 'all' ? 'Saldo do período' : 'Saldo do mês'} value={loading ? '…' : loadError ? '—' : money(report.balance)} detail="Movimentação líquida, incluindo aportes" tone="balance" />
     </section>
 
@@ -487,11 +535,12 @@ export default function FinancePage() {
       <div className="finance-control-metrics">
         <ControlMetric label="Verba para reposição" value={loading ? '…' : loadError ? '—' : money(control.replenishment)} detail={`${money(control.expenses)} despesas + ${money(control.saleFees)} taxas`} tone="reserve" />
         <ControlMetric label="Lucro operacional de caixa" value={loading ? '…' : loadError ? '—' : money(control.operatingResult)} detail="Entradas recebidas menos despesas e taxas; sem aportes" tone={control.operatingResult < 0 ? 'negative' : 'profit'} />
-        <ControlMetric label="Aportes recebidos" value={loading ? '…' : loadError ? '—' : money(control.investmentIncome)} detail="Capital do negócio; não é lucro" tone="investment" />
-        <ControlMetric label="Disponível para gastar" value={loading ? '…' : loadError ? '—' : money(control.freeCash)} detail={control.freeCash < 0 ? `Faltam ${money(Math.abs(control.freeCash))} para cobrir as saídas` : 'Caixa após despesas, taxas e aportes'} tone={control.freeCash < 0 ? 'negative' : 'available'} />
+        <ControlMetric label="Caixa da empresa" value={loading ? '…' : loadError ? '—' : money(control.businessCash)} detail="Saldo após despesas pagas com o caixa da empresa" tone={control.businessCash < 0 ? 'negative' : 'available'} />
+        <ControlMetric label="Saldo de investimentos" value={loading ? '…' : loadError ? '—' : money(control.investmentBalance)} detail="Aportes recebidos menos compras pagas com investimento" tone={control.investmentBalance < 0 ? 'negative' : 'investment'} />
+        <ControlMetric label="Disponível para gastar" value={loading ? '…' : loadError ? '—' : money(control.freeCash)} detail={control.freeCash < 0 ? `Faltam ${money(Math.abs(control.freeCash))} para cobrir as saídas` : 'Caixa após despesas, investimentos e aportes'} tone={control.freeCash < 0 ? 'negative' : 'available'} />
         <ControlMetric label="Produção estimada dos pedidos" value={salesLoading || productsLoading ? '…' : money(control.estimatedProductionCost)} detail="Referência de reinvestimento calculada pelas fichas técnicas" tone="investment" />
       </div>
-      <p className="finance-control-note">Use o valor disponível como limite de referência, não como saldo bancário total: o cálculo considera somente movimentações registradas e inclui aportes no caixa, mas aportes não são lucro. Como o sistema não guarda a data de cada parcela, recebimentos são atribuídos ao mês da venda. O custo de produção é uma estimativa pelas fichas técnicas atuais, exibida à parte para não descontar novamente compras de material já lançadas como despesas.</p>
+      <p className="finance-control-note">A origem da compra define qual saldo diminui: caixa da empresa ou saldo de investimentos. O saldo de investimentos pode ficar negativo se as compras forem maiores que os aportes registrados. Despesas pendentes só entram nos saldos quando forem pagas. Registros antigos sem origem informada são considerados no caixa da empresa até você ajustar a origem em “Editar financeiro”. Investimentos em estoque não reduzem o lucro operacional. Os valores são estimativas das movimentações registradas, não substituem o saldo bancário.</p>
 
       <div className="finance-control-tables">
         <div className="finance-control-table-wrap">
@@ -523,13 +572,14 @@ export default function FinancePage() {
         <label>Valor (R$)<input type="number" min="0.01" step="0.01" required value={form.amount} onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))} placeholder="0,00" /></label>
         <label>Forma de pagamento<select value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{Object.entries(paymentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {form.type === 'expense' && <label>Situação do pagamento<select value={form.paymentStatus} onChange={(event) => setForm((current) => ({ ...current, paymentStatus: event.target.value }))}><option value="paid">Pago</option><option value="pending">Pendente</option></select></label>}
+        {form.type === 'expense' && <label>Origem do dinheiro<select value={form.fundingSource} onChange={(event) => setForm((current) => ({ ...current, fundingSource: event.target.value }))}><option value="business_cash">Caixa da empresa</option><option value="investment_funds">Investimentos / aportes</option></select></label>}
         <label className="finance-notes-field">Observação <span className="optional-label">opcional</span><input maxLength={240} value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Detalhes para seu controle" /></label>
         <div className="finance-form-actions">{editingId && <button className="button button-secondary" type="button" onClick={resetForm}>Cancelar edição</button>}<button className="button button-primary" disabled={saving}>{saving ? 'Salvando…' : editingId ? 'Salvar alterações' : 'Salvar lançamento'}</button></div>
       </form>
     </section>
 
     <section className="panel finance-entry-panel materials-finance-panel">
-      <header className="finance-section-heading"><div><p className="eyebrow">MATERIAIS E INSUMOS</p><h3>Estoque de materiais</h3><p>Registre a compra, a unidade e o custo. Cada compra também entra automaticamente como despesa no Financeiro.</p></div></header>
+      <header className="finance-section-heading"><div><p className="eyebrow">MATERIAIS E INSUMOS</p><h3>Estoque de materiais</h3><p>Registre a compra e classifique o valor como investimento ou despesa operacional, além de indicar se já foi pago.</p></div></header>
       <form className="finance-form material-purchase-form" onSubmit={submitMaterialPurchase}>
         <label>Material<select value={materialForm.materialId} onChange={(event) => {
           const materialId = event.target.value
@@ -568,6 +618,9 @@ export default function FinancePage() {
         <label>Valor total da compra (R$)<input type="number" min="0.01" step="0.01" required value={materialForm.packageCost} onChange={(event) => setMaterialForm((current) => ({ ...current, packageCost: event.target.value }))} placeholder="0,00" />{purchaseUnitCost > 0 && <small>Custo desta compra: {unitCostMoney(purchaseUnitCost)} / {formatUnit(purchaseBaseUnit)}</small>}</label>
         {!materialForm.materialId && <label>Estoque mínimo ({formatUnit(purchaseBaseUnit)})<input type="number" min="0" step="any" value={materialForm.minStock} onChange={(event) => setMaterialForm((current) => ({ ...current, minStock: event.target.value }))} /></label>}
         <label>Forma de pagamento<select value={materialForm.paymentMethod} onChange={(event) => setMaterialForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{Object.entries(paymentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Origem do dinheiro<select required value={materialForm.fundingSource} onChange={(event) => setMaterialForm((current) => ({ ...current, fundingSource: event.target.value }))}><option value="business_cash">Caixa da empresa</option><option value="investment_funds">Investimentos / aportes</option></select><small>O valor será descontado do saldo escolhido, mesmo que o saldo de investimentos fique negativo.</small></label>
+        <label>Natureza do gasto<select value={materialForm.financialCategory} onChange={(event) => setMaterialForm((current) => ({ ...current, financialCategory: event.target.value }))}><option value="investment">Investimento em estoque (não reduz o lucro operacional)</option><option value="materials">Despesa operacional</option></select></label>
+        <label>Situação do pagamento<select value={materialForm.paymentStatus} onChange={(event) => setMaterialForm((current) => ({ ...current, paymentStatus: event.target.value }))}><option value="paid">Já pago</option><option value="pending">Pendente</option></select></label>
         <div className="finance-form-actions"><button className="button button-primary" disabled={savingMaterial}>{savingMaterial ? 'Salvando…' : 'Registrar compra e material'}</button></div>
       </form>
       {materialsLoading ? <div className="sales-loading">Carregando materiais…</div> : materials.length === 0 ? <div className="finance-empty"><strong>Nenhum material cadastrado</strong><small>Registre filamento, papel, plástico-bolha, embalagens ou outros insumos acima.</small></div> : <div className="finance-table-scroll"><table className="finance-table materials-table"><thead><tr><th>Material</th><th>Estoque atual</th><th>Estoque mínimo</th><th>Custo médio por unidade</th><th>Valor em estoque</th></tr></thead><tbody>{materials.map((material) => {
@@ -577,19 +630,22 @@ export default function FinancePage() {
     </section>
 
     <section className="panel finance-ledger-panel finance-history-ledger">
-      <header className="finance-section-heading finance-ledger-heading"><div><p className="eyebrow">HISTÓRICO</p><h3>Lançamentos de {monthLabel(month)}</h3><p>Vendas aparecem no resumo; esta lista mostra receitas adicionais e despesas manuais.</p></div><span className="count-chip">{report.monthTransactions.length} registros</span></header>
-      {transactionsLoading ? <div className="sales-loading">Carregando lançamentos…</div> : report.monthTransactions.length === 0 ? <div className="finance-empty"><span aria-hidden="true">＋</span><strong>Nenhum lançamento manual {month === 'all' ? 'no período' : 'neste mês'}</strong><small>Use o formulário acima para registrar despesas ou outras receitas.</small></div> : <div className="finance-table-scroll"><table className="finance-table"><thead><tr><th>Data</th><th>Lançamento</th><th>Categoria</th><th>Pagamento</th><th>Status</th><th className="finance-amount-column">Valor</th><th>Ações</th></tr></thead><tbody>{report.monthTransactions.map((entry) => {
+      <header className="finance-section-heading finance-ledger-heading"><div><p className="eyebrow">HISTÓRICO</p><h3>Lançamentos de {monthLabel(month)}</h3><p>Vendas aparecem no resumo; esta lista mostra receitas adicionais e despesas manuais.</p><button type="button" className="button button-secondary" disabled={transactionsLoading || reclassifyingMaterials} onClick={reclassifyExistingMaterialExpenses}>{reclassifyingMaterials ? 'Reclassificando…' : 'Corrigir despesas antigas de materiais'}</button><small>Reclassifica todos os lançamentos ativos de materiais e embalagens como investimento pago, debitado do caixa da empresa.</small></div><span className="count-chip">{report.monthTransactions.length} registros</span></header>
+      {transactionsLoading ? <div className="sales-loading">Carregando lançamentos…</div> : report.monthTransactions.length === 0 ? <div className="finance-empty"><span aria-hidden="true">＋</span><strong>Nenhum lançamento manual {month === 'all' ? 'no período' : 'neste mês'}</strong><small>Use o formulário acima para registrar despesas ou outras receitas.</small></div> : <div className="finance-table-scroll"><table className="finance-table"><thead><tr><th>Data</th><th>Lançamento</th><th>Categoria</th><th>Pagamento</th><th>Origem do dinheiro</th><th>Status</th><th className="finance-amount-column">Valor</th><th>Ações</th></tr></thead><tbody>{report.monthTransactions.map((entry) => {
         const cancelled = entry.status === 'cancelled'
         const materialPurchase = Boolean(entry.sourceMaterialPurchaseId)
-        const canImportStock = entry.type === 'expense' && ['materials', 'packaging'].includes(entry.category) && !materialPurchase && !cancelled
+        const canImportStock = entry.type === 'expense'
+          && (['materials', 'packaging'].includes(entry.category) || entry.investmentMaterialPurchase === true)
+          && !materialPurchase && !cancelled
         return [<tr className={cancelled ? 'finance-voided-row' : ''} key={entry.id}>
           <td>{dateLabel(entry.date)}</td>
           <td><strong>{entry.description}</strong>{entry.notes && <small>{entry.notes}</small>}</td>
           <td>{categoryLabel(entry)}</td>
           <td>{paymentLabels[entry.paymentMethod] || 'Outro'}</td>
+          <td>{entry.type === 'expense' ? fundingSourceLabel(entry.fundingSource) : '—'}</td>
           <td><span className={`finance-kind finance-kind-${entry.type}`}>{cancelled ? 'Estornado' : entry.type === 'income' ? 'Receita' : entry.paymentStatus === 'pending' ? 'Pendente' : 'Pago'}</span>{!cancelled && entry.type === 'expense' && entry.paymentStatus === 'pending' && <button type="button" className="finance-row-pay-action" disabled={busyId === entry.id} onClick={() => markExpensePaid(entry)}>{busyId === entry.id ? 'Salvando…' : 'Marcar como paga'}</button>}</td>
           <td className={`finance-amount finance-amount-${entry.type}`}>{entry.type === 'income' ? '+' : '−'} {money(entry.amount)}</td>
-          <td><div className="finance-row-actions"><button type="button" disabled={cancelled || busyId === entry.id || saving} onClick={() => materialPurchase ? setEditingHistoryId(editingHistoryId === entry.id ? '' : entry.id) : startEdit(entry)}>{materialPurchase ? editingHistoryId === entry.id ? 'Fechar edição' : 'Editar quantidade' : 'Editar'}</button><button type="button" className="finance-void-action" title={materialPurchase ? 'Estornar não é permitido para uma compra vinculada ao estoque.' : undefined} disabled={materialPurchase || cancelled || busyId === entry.id || saving} onClick={() => voidEntry(entry)}>{busyId === entry.id ? 'Processando…' : 'Estornar'}</button><button type="button" className="finance-void-action" disabled={busyId === entry.id || saving || (cancelled && materialPurchase)} onClick={() => deleteEntry(entry)}>{busyId === entry.id ? 'Excluindo…' : 'Excluir'}</button>{canImportStock && <button type="button" onClick={() => setImportingHistoryId(importingHistoryId === entry.id ? '' : entry.id)}>{importingHistoryId === entry.id ? 'Fechar estoque' : 'Incluir no estoque'}</button>}</div></td>
+          <td><div className="finance-row-actions">{!cancelled && entry.type === 'expense' && ['materials', 'packaging'].includes(entry.category) && <button type="button" className="finance-row-pay-action" disabled={busyId === entry.id || saving} onClick={() => classifyMaterialPurchaseAsInvestment(entry)}>Classificar como investimento</button>}<button type="button" disabled={cancelled || busyId === entry.id || saving} onClick={() => materialPurchase ? setEditingHistoryId(editingHistoryId === entry.id ? '' : entry.id) : startEdit(entry)}>{materialPurchase ? editingHistoryId === entry.id ? 'Fechar edição' : 'Editar quantidade' : 'Editar'}</button>{materialPurchase && <button type="button" disabled={cancelled || busyId === entry.id || saving} onClick={() => startEdit(entry)}>Editar financeiro</button>}<button type="button" className="finance-void-action" title={materialPurchase ? 'Estornar não é permitido para uma compra vinculada ao estoque.' : undefined} disabled={materialPurchase || cancelled || busyId === entry.id || saving} onClick={() => voidEntry(entry)}>{busyId === entry.id ? 'Processando…' : 'Estornar'}</button><button type="button" className="finance-void-action" disabled={busyId === entry.id || saving || (cancelled && materialPurchase)} onClick={() => deleteEntry(entry)}>{busyId === entry.id ? 'Excluindo…' : 'Excluir'}</button>{canImportStock && <button type="button" onClick={() => setImportingHistoryId(importingHistoryId === entry.id ? '' : entry.id)}>{importingHistoryId === entry.id ? 'Fechar estoque' : 'Incluir no estoque'}</button>}</div></td>
         </tr>, ...(importingHistoryId === entry.id && canImportStock ? [<HistoryStockImport key={`${entry.id}-stock-import`} entry={entry} materials={materials} onCancel={() => setImportingHistoryId('')} onImported={(successMessage) => { setImportingHistoryId(''); setMessage(successMessage) }} />] : []), ...(editingHistoryId === entry.id && materialPurchase && !cancelled ? [<HistoryStockEditor key={`${entry.id}-stock-edit`} entry={entry} onCancel={() => setEditingHistoryId('')} onSaved={(successMessage) => { setEditingHistoryId(''); setMessage(successMessage) }} />] : [])]
       })}</tbody></table></div>}
     </section>

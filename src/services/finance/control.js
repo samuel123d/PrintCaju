@@ -19,19 +19,28 @@ export function calculateFinancialControl({ sales, transactions, products, month
   const monthTransactions = transactions.filter((entry) => !month || month === 'all' || entry.date?.startsWith(month))
   const activeTransactions = monthTransactions.filter((entry) => entry.status !== 'cancelled')
   const expenseEntries = activeTransactions.filter((entry) => entry.type === 'expense')
-  const expenses = expenseEntries.filter((entry) => entry.paymentStatus !== 'pending')
+  const paidExpenses = expenseEntries.filter((entry) => entry.paymentStatus !== 'pending')
   const pendingExpenses = expenseEntries.filter((entry) => entry.paymentStatus === 'pending')
+  const expenses = paidExpenses.filter((entry) => entry.category !== 'investment')
+  const investmentExpenses = paidExpenses.filter((entry) => entry.category === 'investment')
+  const businessCashExpenses = paidExpenses.filter((entry) => entry.fundingSource !== 'investment_funds')
+  const investmentFundExpenses = paidExpenses.filter((entry) => entry.fundingSource === 'investment_funds')
   const incomes = activeTransactions.filter((entry) => entry.type === 'income')
   const salesReceived = monthSales.reduce((total, sale) => total + valueOf(sale.receivedAmount), 0)
   const saleFees = monthSales.reduce((total, sale) => total + valueOf(sale.fees), 0)
   const expensesTotal = expenses.reduce((total, entry) => total + valueOf(entry.amount), 0)
+  const investmentExpensesTotal = investmentExpenses.reduce((total, entry) => total + valueOf(entry.amount), 0)
   const investmentIncome = incomes.filter((entry) => entry.category === 'investment')
     .reduce((total, entry) => total + valueOf(entry.amount), 0)
   const operatingIncome = incomes.filter((entry) => entry.category !== 'investment')
     .reduce((total, entry) => total + valueOf(entry.amount), 0)
+  const businessCash = salesReceived + operatingIncome - saleFees
+    - businessCashExpenses.reduce((total, entry) => total + valueOf(entry.amount), 0)
+  const investmentBalance = investmentIncome
+    - investmentFundExpenses.reduce((total, entry) => total + valueOf(entry.amount), 0)
   const replenishment = expensesTotal + saleFees
   const operatingResult = salesReceived + operatingIncome - replenishment
-  const freeCash = operatingResult + investmentIncome
+  const freeCash = businessCash + investmentBalance
 
   const productById = new Map(products.map((product) => [product.id, product]))
   const materialUsage = new Map()
@@ -102,6 +111,9 @@ export function calculateFinancialControl({ sales, transactions, products, month
     operatingIncome,
     investmentIncome,
     expenses: expensesTotal,
+    investmentExpenses: investmentExpensesTotal,
+    businessCash,
+    investmentBalance,
     pendingExpenses: pendingExpenses.reduce((total, entry) => total + valueOf(entry.amount), 0),
     saleFees,
     replenishment,

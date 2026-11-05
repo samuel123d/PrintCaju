@@ -5,6 +5,7 @@ import useClients from '../hooks/useClients.js'
 import useExternalSales from '../hooks/useExternalSales.js'
 import useQuotes from '../hooks/useQuotes.js'
 import { deleteClient, saveClient } from '../services/clients/clients.js'
+import { createCustomerRegistrationFormLink } from '../services/sales/externalSales.js'
 import { formatBrazilianPhone, formatBrazilianTaxId } from '../utils/inputMasks.js'
 
 const emptyClient = () => ({ name: '', taxId: '', phone: '', email: '', address: '', city: '', state: '', postalCode: '' })
@@ -41,6 +42,9 @@ export default function ClientsPage() {
   const [saveError, setSaveError] = useState('')
   const [deletingId, setDeletingId] = useState('')
   const [formLinkMessage, setFormLinkMessage] = useState('')
+  const [formLinkError, setFormLinkError] = useState('')
+  const [registrationLink, setRegistrationLink] = useState('')
+  const [creatingFormLink, setCreatingFormLink] = useState(false)
   const [selectedClient, setSelectedClient] = useState(null)
   const filteredClients = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR')
@@ -75,13 +79,24 @@ export default function ClientsPage() {
   }, [quotes, selectedClient])
 
   async function copyCustomerRegistrationLink() {
-    const link = `${window.location.origin}/cadastro-cliente`
     setFormLinkMessage('')
+    setFormLinkError('')
+    setCreatingFormLink(true)
     try {
-      await navigator.clipboard.writeText(link)
-      setFormLinkMessage('Link do formulário copiado. Envie ao cliente pelo WhatsApp ou e-mail.')
-    } catch {
-      setFormLinkMessage('Não foi possível copiar automaticamente. Abra o formulário pelo botão abaixo e copie o endereço do navegador.')
+      if (!workspaceUid) throw new Error('Não foi possível identificar o espaço de trabalho.')
+      const token = await createCustomerRegistrationFormLink(workspaceUid)
+      const link = `${window.location.origin}/formulario-cliente/${token}`
+      setRegistrationLink(link)
+      try {
+        await navigator.clipboard.writeText(link)
+        setFormLinkMessage('Link seguro do formulário copiado. Envie ao cliente pelo WhatsApp ou e-mail.')
+      } catch {
+        setFormLinkMessage('O link foi gerado. Se não foi copiado automaticamente, abra o formulário e copie o endereço.')
+      }
+    } catch (cause) {
+      setFormLinkError(cause.message || 'Não foi possível gerar o formulário de cadastro.')
+    } finally {
+      setCreatingFormLink(false)
     }
   }
 
@@ -148,8 +163,9 @@ export default function ClientsPage() {
   }
 
   return <div className="page-stack">
-    <div className="page-intro"><div><p className="eyebrow">RELACIONAMENTO</p><h2>Clientes</h2><p>Envie ao cliente o link público do formulário Google para coletar os dados sem exigir login.</p></div><div className="client-form-link-actions"><button type="button" className="button button-primary" onClick={copyCustomerRegistrationLink}>Copiar link do formulário</button><a className="button button-secondary" href="/cadastro-cliente" target="_blank" rel="noreferrer">Abrir formulário</a></div></div>
-    {formLinkMessage && <div className="alert alert-success" role="status">{formLinkMessage}</div>}
+    <div className="page-intro"><div><p className="eyebrow">RELACIONAMENTO</p><h2>Clientes</h2><p>Gere um link seguro para o cliente preencher o cadastro, que será salvo no sistema e poderá ser associado à conta dele após confirmar o e-mail.</p></div><div className="client-form-link-actions"><button type="button" className="button button-primary" disabled={creatingFormLink} onClick={copyCustomerRegistrationLink}>{creatingFormLink ? 'Gerando link…' : registrationLink ? 'Gerar novo link' : 'Gerar e copiar formulário'}</button>{registrationLink && <a className="button button-secondary" href={registrationLink} target="_blank" rel="noreferrer">Abrir formulário</a>}</div></div>
+    {formLinkMessage && <div className="alert alert-success" role="status">{formLinkMessage} {registrationLink && <a href={registrationLink} target="_blank" rel="noreferrer">Abrir formulário</a>}</div>}
+    {formLinkError && <div className="alert alert-error" role="alert">{formLinkError}</div>}
     {(error || saveError) && <div className="sales-error" role="alert">{saveError || error}</div>}
     {message && <div className="alert alert-success" role="status">{message}</div>}
     <section className="panel finance-entry-panel">
@@ -181,7 +197,7 @@ export default function ClientsPage() {
         <h4 className="client-history-subheading">Orçamentos</h4>
         {clientQuotes.length ? <div className="finance-table-scroll"><table className="finance-table client-history-table"><thead><tr><th>Orçamento</th><th>Emissão</th><th>Validade</th><th>Status</th><th>Total</th></tr></thead><tbody>{clientQuotes.map((quote) => <tr key={quote.id}><td><strong>{quote.quoteNumber || `ORC-${quote.id.slice(0, 8).toUpperCase()}`}</strong></td><td>{dateLabel(quote.quoteDate)}</td><td>{dateLabel(quote.validUntil)}</td><td>{quote.status === 'converted' ? 'Convertido em venda' : quote.status === 'cancelled' ? 'Cancelado' : quote.status === 'open' && quote.validUntil && quote.validUntil < new Date().toISOString().slice(0, 10) ? 'Vencido' : 'Aberto'}</td><td>{money(quote.total)}</td></tr>)}</tbody></table></div> : <p className="client-history-empty">Nenhum orçamento encontrado para este cliente.</p>}
       </>}
-      <div className="client-history-link"><Link className="button button-secondary" to="/vendas">Abrir histórico comercial completo</Link></div>
+      <div className="client-history-link"><Link className="button button-secondary" to="/admin/vendas">Abrir histórico comercial completo</Link></div>
     </section>}
   </div>
 }

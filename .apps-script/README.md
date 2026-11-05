@@ -12,7 +12,8 @@ This Apps Script syncs each new response in the linked Google Sheets response ta
 6. Select `installPrintCajuTrigger` in the Apps Script function menu and click **Run** once. Approve the requested Sheets, external request, and Firestore scopes. The installable trigger then runs after each form submission.
 7. Submit one test response and confirm a new client appears in Print Caju.
 
+After updating the script, run `syncExistingFormResponses` once from the response sheet to apply the corrected email-first matching to previous responses. If a customer account is already open, use **Atualizar cadastro e pedidos** in the customer portal after the sync completes.
+
 The script recognizes common Portuguese column titles for name, CPF/CNPJ, phone/WhatsApp, e-mail, address, city, state, and CEP. Name and either phone or e-mail are required. It hashes CPF, e-mail, or phone into a stable Firestore document ID (in that order) so repeat submissions with the same identity update that client instead of adding another one.
 
 Google Apps Script and Firestore have usage quotas and limits; this avoids the Firebase Functions Blaze deployment requirement but is not an unlimited service. The Google Forms response stays in the response spreadsheet as well.
-

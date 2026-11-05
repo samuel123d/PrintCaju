@@ -123,7 +123,7 @@ export default function AgendaPage() {
         if (localStorage.getItem(key)) return
         localStorage.setItem(key, 'sent')
         const notification = new Notification(item.type === 'meeting' ? 'Reunião na agenda' : 'Lembrete de tarefa', { body: `${item.title}${item.time ? ` · ${item.time}` : ''}`, icon: '/printcaju-mark.png' })
-        notification.onclick = () => { window.focus(); window.location.href = `/agenda?item=${encodeURIComponent(item.id)}`; notification.close() }
+        notification.onclick = () => { window.focus(); window.location.href = `/admin/agenda?item=${encodeURIComponent(item.id)}`; notification.close() }
       })
     }
     check()

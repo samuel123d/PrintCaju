@@ -43,7 +43,7 @@ npm run preview
 
 ## Publicar no Vercel
 
-Ao importar o repositório no Vercel, use o framework **Vite**, o comando de build `npm run build` e o diretório de saída `dist`. O arquivo `vercel.json` mantém as rotas do React funcionando quando uma página interna é aberta ou atualizada diretamente.
+Ao importar o repositório no Vercel, use o framework **Vite**, o comando de build `npm run build` e o diretório de saída `dist`. O arquivo `vercel.json` reescreve as rotas do React para `index.html`, permitindo abrir o site institucional em `/` e acessar ou atualizar diretamente as páginas internas.
 
 O repositório inclui `.env.production` com a configuração pública do Firebase Web necessária ao build. Se preferir configurar ou substituir os valores no painel, em **Settings → Environment Variables** use estas variáveis:
 
@@ -55,6 +55,27 @@ O repositório inclui `.env.production` com a configuração pública do Firebas
 - `VITE_FIREBASE_MEASUREMENT_ID` (opcional)
 
 Use os valores da configuração do app Web em **Firebase Console → Project settings → General**. Depois de salvar alterações no painel, faça um novo deploy. No Firebase Authentication, adicione também o domínio do deploy Vercel aos domínios autorizados. Os valores `VITE_*` são enviados ao navegador; não coloque chaves de serviço ou outros segredos neles.
+
+## Publicar no Firebase Hosting
+
+Para publicar o site e as regras do Firestore, execute na raiz do projeto:
+
+```bash
+npm run build
+firebase deploy --only hosting,firestore:rules
+```
+
+O portal de clientes e os pedidos pelo site usam acesso direto ao Firestore e funcionam no plano Spark; não inclua `functions` nesse deploy. A publicação de Cloud Functions exige o plano Blaze.
+
+Na aba pública **Compras**, o catálogo exibe todos os produtos ativos e sincroniza automaticamente novos produtos, alterações e fotos. Na primeira publicação, entre em **Administração → Site institucional** para inicializar o vínculo da loja com as contas dos clientes e sincronizar os produtos já cadastrados. O catálogo público recebe nome, descrição, categoria, preço, foto e quantidade disponível. O feed Behold da Print Caju já vem configurado e é carregado automaticamente na página inicial, sem sincronização manual; a conexão direta ao Instagram requer Cloud Functions, que exige o plano Blaze.
+
+## Compras no site e e-mails
+
+Os clientes podem adicionar produtos à sacola, criar ou acessar uma conta e enviar uma solicitação de compra. Cada solicitação é gravada como venda do canal **Site institucional**, aguardando confirmação em **Vendas externas**; o estoque só é baixado quando o administrador confirma o pedido. O cliente acompanha o pedido na área da conta e pode abrir a conversa pelo WhatsApp configurado em **Site institucional**.
+
+O Firebase Authentication envia o e-mail de verificação da conta. No fluxo de pedidos pelo site no plano Spark, a solicitação fica visível no portal do cliente e em **Vendas externas** para confirmação administrativa; não é enviado um e-mail de confirmação do pedido automaticamente.
+
+Para personalizar os e-mails de verificação do Firebase Authentication, configure o nome do remetente e o modelo em **Firebase Console → Authentication → Templates**. O link de verificação volta para a tela da Print Caju com a identidade visual; o domínio do site também precisa estar autorizado em **Authentication → Settings → Authorized domains**.
 
 ## Cadastro manual de produtos e vendas
 

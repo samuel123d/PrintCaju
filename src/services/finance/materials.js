@@ -157,6 +157,9 @@ export function deleteMaterialPurchaseFromHistory(uid, transactionId) {
 }
 
 export function createMaterialPurchase(uid, purchase, createdBy = uid, materialId = '') {
+  if (!['investment', 'materials'].includes(purchase.financialCategory)) throw new Error('Selecione uma classificação financeira válida.')
+  if (!['paid', 'pending'].includes(purchase.paymentStatus)) throw new Error('Selecione uma situação de pagamento válida.')
+  if (!['business_cash', 'investment_funds'].includes(purchase.fundingSource)) throw new Error('Selecione de qual saldo saiu o valor da compra.')
   const materialRef = materialId
     ? doc(db, 'users', uid, 'materials', materialId)
     : doc(materialsCollection(uid))
@@ -218,9 +221,11 @@ export function createMaterialPurchase(uid, purchase, createdBy = uid, materialI
       type: 'expense',
       date: purchase.date,
       description: `Compra de material: ${material.name}`,
-      category: 'materials',
+      category: purchase.financialCategory,
       amount: Number(purchase.packageCost),
       paymentMethod: purchase.paymentMethod,
+      paymentStatus: purchase.paymentStatus,
+      fundingSource: purchase.fundingSource,
       notes: `Entrada de ${purchase.packageQuantity} ${purchase.packageUnit} no estoque de materiais.`,
       status: 'active',
       sourceMaterialPurchaseId: purchaseRef.id,
@@ -243,7 +248,9 @@ export function importHistoricalMaterialPurchase(uid, transactionId, purchase, c
     const expenseSnapshot = await transaction.get(expenseRef)
     if (!expenseSnapshot.exists()) throw new Error('O lançamento financeiro não foi encontrado.')
     const expense = expenseSnapshot.data()
-    if (expense.type !== 'expense' || !['materials', 'packaging'].includes(expense.category) || expense.status === 'cancelled') {
+    if (expense.type !== 'expense'
+      || (!['materials', 'packaging'].includes(expense.category) && expense.investmentMaterialPurchase !== true)
+      || expense.status === 'cancelled') {
       throw new Error('Somente despesas ativas das categorias Materiais e insumos ou Embalagens podem ser vinculadas ao estoque.')
     }
     if (expense.sourceMaterialPurchaseId) throw new Error('Este lançamento já foi vinculado ao estoque.')

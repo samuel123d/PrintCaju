@@ -12,7 +12,9 @@ export function calculateSalesGoalTotals(sales, now = new Date()) {
   const weekEnd = localDateKey(weekEndDate)
   const monthKey = today.slice(0, 7)
   const yearKey = today.slice(0, 4)
-  const activeSales = sales.filter((sale) => sale.status !== 'cancelled' && sale.soldAt && sale.soldAt <= today)
+  const activeSales = sales.filter((sale) => sale.status !== 'cancelled'
+    && sale.orderApprovalStatus !== 'pending'
+    && sale.soldAt && sale.soldAt <= today)
   const total = (rows) => rows.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0)
 
   return {
