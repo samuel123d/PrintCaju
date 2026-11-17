@@ -1,6 +1,7 @@
 import { Component, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
+import { Analytics } from '@vercel/analytics/react'
 import Brand from './components/Brand.jsx'
 import './styles/global.css'
 
@@ -37,5 +38,14 @@ function renderStartupError(error) {
 root.render(<main className="app-startup"><div className="app-startup-mark">✳</div><strong>Print Caju</strong><span>Preparando nosso espaço…</span></main>)
 
 import('./App.jsx').then(({ default: App }) => {
-  root.render(<StrictMode><AppRenderBoundary><BrowserRouter><App /></BrowserRouter></AppRenderBoundary></StrictMode>)
+  root.render(
+    <StrictMode>
+      <AppRenderBoundary>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AppRenderBoundary>
+      <Analytics />
+    </StrictMode>
+  )
 }).catch(renderStartupError)
