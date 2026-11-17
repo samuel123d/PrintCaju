@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
 import BrandLoader from './components/BrandLoader.jsx'
 
@@ -80,5 +81,10 @@ function RouteContent() {
 }
 
 export default function App() {
-  return <AuthProvider><RouteContent /></AuthProvider>
+  return (
+    <AuthProvider>
+      <RouteContent />
+      <Analytics />
+    </AuthProvider>
+  )
 }
